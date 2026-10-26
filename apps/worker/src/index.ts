@@ -1,6 +1,7 @@
 import kernel from "./kernel";
 import { routeApi } from "./routes/api";
 import type { Env } from "./types";
+export { ProductFactoryActor } from "./factory";
 export { MicrokernelProcessActor } from "./kernel";
 
 export default {
@@ -43,7 +44,8 @@ export default {
       return new Response(null, { status: 204, headers });
 
     try {
-      const response = await routeApi(request, env);
+      const upstream = await routeApi(request, env);
+      const response = new Response(upstream.body, upstream);
       headers.forEach((value, key) => response.headers.set(key, value));
       return response;
     } catch (error) {
