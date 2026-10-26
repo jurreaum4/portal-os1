@@ -1,5 +1,7 @@
 import { useCallback } from "react";
 import { Link, useParams } from "react-router-dom";
+import { getOutputs, getDivisions } from "../api/operations";
+import { money } from "../types";
 import { getProduct } from "../api/products";
 import { AsyncState } from "../components/AsyncState";
 import { useApi } from "../hooks/useApi";
@@ -10,6 +12,12 @@ export default function ProductDetail() {
     [id],
   );
   const state = useApi(load);
+  const loadOutputs = useCallback(
+    (signal: AbortSignal) => getOutputs(id, signal),
+    [id],
+  );
+  const outputs = useApi(loadOutputs);
+  const divisions = useApi(getDivisions);
   return (
     <>
       <Link className="back-link" to="/products">
@@ -35,6 +43,21 @@ export default function ProductDetail() {
             <h2>Product details</h2>
             <dl>
               <div>
+                <dt>Division</dt>
+                <dd>
+                  {divisions.data?.find((d) => d.id === state.data?.divisionId)
+                    ?.name ?? state.data.divisionId}
+                </dd>
+              </div>
+              <div>
+                <dt>Monthly revenue (USD)</dt>
+                <dd>{money(state.data.revenue)}</dd>
+              </div>
+              <div>
+                <dt>Product health</dt>
+                <dd>{state.data.status}</dd>
+              </div>
+              <div>
                 <dt>Portfolio score</dt>
                 <dd>{state.data.score} / 100</dd>
               </div>
@@ -51,8 +74,29 @@ export default function ProductDetail() {
                 <dd>{state.data.updatedAt}</dd>
               </div>
             </dl>
-            <Link className="button" to="/approvals">
+            <Link
+              className="button"
+              to={`/approvals?product=${encodeURIComponent(id)}`}
+            >
               Review approval queue →
+            </Link>
+          </section>
+          <section className="panel output-panel">
+            <h2>Factory outputs</h2>
+            <AsyncState {...outputs} retry={outputs.reload} />
+            {outputs.data?.length === 0 && (
+              <p className="muted">
+                No planning outputs yet. Start a run in the product factory.
+              </p>
+            )}
+            {outputs.data?.map((o) => (
+              <details key={o.id}>
+                <summary>{o.engine} output</summary>
+                <pre>{o.content}</pre>
+              </details>
+            ))}
+            <Link className="button" to="/orchestration">
+              Open product factory →
             </Link>
           </section>
         </>

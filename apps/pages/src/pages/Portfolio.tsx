@@ -1,19 +1,31 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { STAGES, money } from "../types";
+import { getDivisions } from "../api/operations";
 import { getPortfolio } from "../api/products";
 import { AsyncState, EmptyState } from "../components/AsyncState";
 import { RefreshControl } from "../components/RefreshControl";
 import { ProductCard } from "../components/ProductCard";
 import { useApi } from "../hooks/useApi";
 export default function Portfolio() {
+  const [params] = useSearchParams();
+  const divisions = useApi(getDivisions);
+  const [division, setDivision] = useState(params.get("division") || "all");
   const state = useApi(getPortfolio);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(params.get("q") || "");
+  useEffect(() => {
+    setQuery(params.get("q") || "");
+    setDivision(params.get("division") || "all");
+  }, [params]);
   const [stage, setStage] = useState("all");
   const [sort, setSort] = useState("score-desc");
-  const [view, setView] = useState<"table" | "cards">("table");
+  const [view, setView] = useState<"table" | "cards" | "organizations">(
+    params.get("view") === "organizations" ? "organizations" : "table",
+  );
   const products = (state.data ?? [])
     .filter(
       (product) =>
+        (division === "all" || product.divisionId === division) &&
         (stage === "all" || product.stage === stage) &&
         `${product.name} ${product.description}`
           .toLowerCase()
@@ -29,6 +41,7 @@ export default function Portfolio() {
   const clear = () => {
     setQuery("");
     setStage("all");
+    setDivision("all");
   };
   return (
     <>
@@ -44,6 +57,7 @@ export default function Portfolio() {
         </div>
         <RefreshControl {...state} />
       </div>
+      <AsyncState {...divisions} retry={divisions.reload} />
       <AsyncState {...state} retry={state.reload} />
       {state.data && (
         <>
@@ -55,8 +69,9 @@ export default function Portfolio() {
             <div>
               <strong>
                 {
-                  state.data.filter((product) => product.stage === "Live")
-                    .length
+                  state.data.filter((product) =>
+                    ["Live", "Published"].includes(product.stage),
+                  ).length
                 }
               </strong>
               <span>Live products</span>
@@ -92,15 +107,22 @@ export default function Portfolio() {
                 onChange={(event) => setStage(event.target.value)}
               >
                 <option value="all">All stages</option>
-                {[
-                  "Idea",
-                  "Validation",
-                  "Build",
-                  "Ready",
-                  "Live",
-                  "Archived",
-                ].map((value) => (
+                {STAGES.map((value) => (
                   <option key={value}>{value}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Division
+              <select
+                value={division}
+                onChange={(e) => setDivision(e.target.value)}
+              >
+                <option value="all">All divisions</option>
+                {divisions.data?.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
                 ))}
               </select>
             </label>
@@ -127,6 +149,12 @@ export default function Portfolio() {
                 Table
               </button>
               <button
+                aria-pressed={view === "organizations"}
+                onClick={() => setView("organizations")}
+              >
+                Organizations
+              </button>
+              <button
                 aria-pressed={view === "cards"}
                 onClick={() => setView("cards")}
               >
@@ -138,7 +166,7 @@ export default function Portfolio() {
             <span role="status">
               {products.length} of {state.data.length} products
             </span>
-            {(query || stage !== "all") && (
+            {(query || stage !== "all" || division !== "all") && (
               <button className="text-button" onClick={clear}>
                 Clear filters
               </button>
@@ -151,6 +179,34 @@ export default function Portfolio() {
               No products match your filters.{" "}
               <button onClick={clear}>Clear filters</button>
             </EmptyState>
+          ) : view === "organizations" ? (
+            <div className="organization-grid">
+              {divisions.data
+                ?.filter((d) => division === "all" || d.id === division)
+                .map((d) => (
+                  <section className="panel" key={d.id}>
+                    <div className="section-heading">
+                      <h2>{d.name}</h2>
+                      <span className="badge">
+                        {products.filter((p) => p.divisionId === d.id).length}{" "}
+                        products
+                      </span>
+                    </div>
+                    {products
+                      .filter((p) => p.divisionId === d.id)
+                      .map((p) => (
+                        <Link
+                          className="stat-row"
+                          to={`/products/${encodeURIComponent(p.id)}`}
+                          key={p.id}
+                        >
+                          {p.name}
+                          <span className="badge">{p.stage}</span>
+                        </Link>
+                      ))}
+                  </section>
+                ))}
+            </div>
           ) : view === "cards" ? (
             <div className="product-grid">
               {products.map((product) => (
@@ -171,9 +227,11 @@ export default function Portfolio() {
                 <thead>
                   <tr>
                     <th scope="col">Product</th>
+                    <th scope="col">Division</th>
                     <th scope="col">Stage</th>
                     <th scope="col">Score</th>
-                    <th scope="col">Overview</th>
+                    <th scope="col">Revenue / mo</th>
+                    <th scope="col">Status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -187,6 +245,11 @@ export default function Portfolio() {
                         </Link>
                       </td>
                       <td>
+                        {divisions.data?.find(
+                          (d) => d.id === product.divisionId,
+                        )?.name ?? product.divisionId}
+                      </td>
+                      <td>
                         <span
                           className={`badge ${product.stage.toLowerCase()}`}
                         >
@@ -197,7 +260,14 @@ export default function Portfolio() {
                         <strong>{product.score}</strong>
                         <span className="muted"> / 100</span>
                       </td>
-                      <td>{product.description || "No description yet."}</td>
+                      <td>{money(product.revenue)}</td>
+                      <td>
+                        <span
+                          className={`badge ${product.status === "Attention" ? "attention" : "published"}`}
+                        >
+                          {product.status}
+                        </span>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

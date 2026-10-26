@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { getApprovals, approve, reject } from "../api/approvals";
+import { getApprovals, approve, reject, override } from "../api/approvals";
 import { AsyncState, EmptyState } from "../components/AsyncState";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { RefreshControl } from "../components/RefreshControl";
@@ -17,6 +17,7 @@ export default function Approvals() {
   const [pending, setPending] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [reason, setReason] = useState("");
   const productId = params.get("product");
   const visible = (state.data ?? []).filter(
     (approval) =>
@@ -35,17 +36,20 @@ export default function Approvals() {
     setRisk("all");
     setParams({});
   };
-  async function decide(action: "approve" | "reject") {
+  async function decide(action: "approve" | "reject" | "override") {
     if (!selected || pending || state.refreshing) return;
     const request = selected;
     setPending(request.id);
     setError("");
     setMessage("");
     try {
-      await (action === "approve" ? approve : reject)(request.id, token);
+      await (action === "override"
+        ? override(request.id, token, reason)
+        : (action === "approve" ? approve : reject)(request.id, token));
       setMessage(
-        `${request.project}: ${request.action} request ${action === "approve" ? "approved" : "rejected"}.`,
+        `${request.project}: ${request.action} request ${action === "approve" ? "approved" : action === "override" ? "overridden" : "rejected"}.`,
       );
+      setReason("");
       state.reload();
     } catch (cause) {
       setError(
@@ -172,7 +176,10 @@ export default function Approvals() {
                     key={approval.id}
                     approval={approval}
                     selected={approval.id === selected?.id}
-                    onReview={() => setSelectedId(approval.id)}
+                    onReview={() => {
+                      setSelectedId(approval.id);
+                      setReason("");
+                    }}
                   />
                 ))}
               </div>
@@ -238,6 +245,26 @@ export default function Approvals() {
                       Reject request
                     </button>
                   </div>
+                  <label className="stacked-label">
+                    Override reason
+                    <input
+                      value={reason}
+                      maxLength={1000}
+                      placeholder="Explain the exception (10+ characters)"
+                      onChange={(e) => setReason(e.target.value)}
+                    />
+                  </label>
+                  <button
+                    disabled={
+                      !token ||
+                      pending !== null ||
+                      state.refreshing ||
+                      reason.trim().length < 10
+                    }
+                    onClick={() => void decide("override")}
+                  >
+                    Override request
+                  </button>
                   <p className="decision-note">
                     Decisions are final for this request. Approval records your
                     intent; it does not publish the product.
