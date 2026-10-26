@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM"],
+    "types": [],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "declaration": true,
+    "outDir": "dist",
+    "rootDir": ".",
+    "skipLibCheck": true
+  },
+  "include": [
+    "index.ts",
+    "contracts/**/*.ts",
+    "state/**/*.ts",
+    "events/**/*.ts",
+    "simulation/**/*.ts",
+    "runtime/**/*.ts",
+    "storage/**/*.ts",
+    "adapters/**/*.ts",
+    "examples/**/*.ts"
+  ]
+}
