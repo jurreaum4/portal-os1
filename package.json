@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "workspaces": [
     "apps/pages",
-    "apps/worker"
+    "apps/worker",
+    "max-core"
   ],
   "engines": {
     "node": ">=22.12.0"
@@ -14,7 +15,7 @@
     "dev:worker": "wrangler dev --port 8787",
     "build": "npm run build -w @portal/pages",
     "typecheck": "npm run typecheck --workspaces",
-    "test": "vitest run",
+    "test": "vitest run && npm run test -w max-core",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:seed:local": "wrangler d1 execute DB --local --file apps/worker/d1/seed.sql",
     "deploy:worker": "wrangler deploy",

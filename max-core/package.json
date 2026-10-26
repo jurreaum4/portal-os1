@@ -1,0 +1,32 @@
+{
+  "name": "max-core",
+  "version": "0.1.0",
+  "type": "module",
+  "files": [
+    "dist",
+    "docs",
+    "README.md",
+    "storage/schema.sql"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./indexeddb": {
+      "types": "./dist/storage/indexeddb.d.ts",
+      "import": "./dist/storage/indexeddb.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json && tsc -p tsconfig.portable.json",
+    "test": "vitest run --config vitest.config.ts",
+    "sample": "npm run build && node dist/examples/simulation.js"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "^6.2.6",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}

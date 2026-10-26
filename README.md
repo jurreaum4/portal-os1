@@ -8,7 +8,8 @@ A Cloudflare monorepo: a React/Vite governor console on **Pages**, a **Worker** 
 - `apps/worker/src/`: API routes, kernel actor, firewall, audit logger.
 - `apps/worker/d1/`: versioned migrations and an explicit local-only synthetic seed.
 - `icvs/`: existing cognitive frame bridge. Its existing simulated signature is not cryptographic authentication.
-- `max-core/`, `portal-os/`, `adapters/`: integration boundaries documented in their README files.
+- `max-core/`: independent platform-neutral foundation workspace; see its [developer guide](max-core/README.md).
+- `portal-os/`, `adapters/`: integration boundaries documented in their README files.
 - `src/kernel/`: compatibility exports for older consumers. Existing Dart source files remain available.
 - `wrangler.toml`: Worker entry point, D1 and Durable Object bindings.
 
