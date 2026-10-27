@@ -1,3 +1,5 @@
+import { loadDefinition } from "./icvs/definition";
+import { captureUniverse } from "./universe/graph";
 import kernel from "./kernel";
 import { routeApi } from "./routes/api";
 import type { Env } from "./types";
@@ -10,17 +12,21 @@ export default {
     env: Env,
     ctx: ExecutionContext,
   ) {
+    ctx.waitUntil(captureUniverse(env));
     ctx.waitUntil(
       (async () => {
         if (!env.FACTORY_ACTOR) return;
         // Reconcile intake committed before actor activation, including pre-upgrade ideas.
+        const definition = await loadDefinition(env.DB);
         const ideas = await env.DB.prepare(
-          `SELECT p.id FROM products p WHERE (p.stage IN ('Idea','Discovery','Validation') OR
+          `SELECT p.id FROM products p WHERE (p.stage IN (?,'Idea','Discovery','Validation') OR
           (p.stage='Build' AND EXISTS (SELECT 1 FROM factory_runs r WHERE r.product_id=p.id AND r.status IN ('running','blocked'))))
         AND length(trim(p.description)) >= 20 AND length(trim(p.name)) >= 2
         AND NOT EXISTS (SELECT 1 FROM workflow_events e WHERE e.product_id=p.id)
         ORDER BY p.updated_at,p.id LIMIT 50`,
-        ).all<{ id: string }>();
+        )
+          .bind(definition.steps[0].stage)
+          .all<{ id: string }>();
         await Promise.all(
           ideas.results.map(async ({ id }) => {
             const response = await env

@@ -1,18 +1,4 @@
-export type Stage =
-  | "Idea"
-  | "Discovery"
-  | "Specification"
-  | "Architecture"
-  | "Simulation"
-  | "Build"
-  | "QA"
-  | "Test"
-  | "Package"
-  | "Ready"
-  | "Published"
-  | "Validation"
-  | "Live"
-  | "Archived";
+export type Stage = string;
 export interface Product {
   id: string;
   name: string;
@@ -126,22 +112,6 @@ export interface Forecast {
     optimistic: number;
   }[];
 }
-export const STAGES: Stage[] = [
-  "Idea",
-  "Discovery",
-  "Specification",
-  "Architecture",
-  "Simulation",
-  "Build",
-  "QA",
-  "Test",
-  "Package",
-  "Ready",
-  "Published",
-  "Validation",
-  "Live",
-  "Archived",
-];
 export const money = (value: number) =>
   new Intl.NumberFormat("en-US", {
     style: "currency",

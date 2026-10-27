@@ -32,6 +32,25 @@ export function Sidebar() {
         </div>
         <Icon name="down" size={14} />
       </div>
+      <div className="workspace-label">MAX UNIVERSE</div>
+      <nav aria-label="MAX Universe">
+        <NavLink to="/portal/universe" end>
+          <Icon name="globe" />
+          Universe
+        </NavLink>
+        <NavLink to="/portal/universe/galaxy">
+          <Icon name="spark" />
+          Ecosystem galaxy
+        </NavLink>
+        <NavLink to="/portal/governor">
+          <Icon name="governance" />
+          Governor console
+        </NavLink>
+        <NavLink to="/marketplace">
+          <Icon name="products" />
+          Marketplace
+        </NavLink>
+      </nav>
       <div className="workspace-label">WORKSPACE</div>
       <nav aria-label="Main navigation">
         {links.map(([to, icon, label]) => (
@@ -61,7 +80,7 @@ export function Sidebar() {
         <div className="edge-note">
           <span className="status-dot" />
           <span>Cloudflare edge workspace</span>
-          <span className="edge-version">v0.2</span>
+          <span className="edge-version">v3</span>
         </div>
         <Link className="profile" to="/settings">
           <span className="profile-avatar">MJ</span>

@@ -1,16 +1,6 @@
 import { Simulation } from "../../../../max-core/simulation";
 
-export const stages = [
-  "Idea",
-  "Discovery",
-  "Specification",
-  "Architecture",
-  "Simulation",
-  "Build",
-  "QA",
-  "Ready",
-] as const;
-export type Stage = (typeof stages)[number] | "Archived";
+export type Stage = string;
 export interface Brief {
   name: string;
   description: string;
@@ -61,9 +51,9 @@ export function architectureEngine(brief: Brief) {
     ],
   };
 }
-export function simulationEngine(brief: Brief) {
+export function simulationEngine(brief: Brief, stages: string[]) {
   const simulation = new Simulation({
-    initial: { index: 0, reached: ["Idea"] },
+    initial: { index: 0, reached: [stages[0]] },
     stepMs: 1,
     reduce: (state) => ({
       index: state.index + 1,
@@ -76,13 +66,13 @@ export function simulationEngine(brief: Brief) {
     method: "MAX-CORE deterministic lifecycle reachability",
     reached: result.reached,
     passed:
-      result.reached.at(-1) === "Ready" &&
+      result.reached.at(-1) === stages.at(-1) &&
       brief.description.trim().length >= 20,
     scope: "Workflow model only; product behavior is verified by executor QA",
   };
 }
-export function scoringEngine(stage: Stage) {
-  const index = stages.indexOf(stage as (typeof stages)[number]);
+export function scoringEngine(stage: Stage, stages: string[]) {
+  const index = stages.indexOf(stage);
   return {
     score:
       stage === "Archived"
@@ -119,6 +109,8 @@ export function validateEvidence(
     )
   )
     throw new Error("Executor returned invalid or uncorrelated evidence");
+  if (e.checks.some((c) => !c.passed))
+    throw new Error("Executor reported failed checks");
   if (
     qa &&
     (!build ||

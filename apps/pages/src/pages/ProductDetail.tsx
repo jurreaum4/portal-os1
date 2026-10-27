@@ -1,4 +1,6 @@
-import { useCallback } from "react";
+import { useGovernor } from "../layouts/GovernorLayout";
+import { api } from "../api/client";
+import { useCallback, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { getOutputs, getDivisions, getTransitions } from "../api/operations";
 import { money } from "../types";
@@ -7,6 +9,20 @@ import { AsyncState } from "../components/AsyncState";
 import { useApi } from "../hooks/useApi";
 export default function ProductDetail() {
   const { id = "" } = useParams();
+  const { token } = useGovernor();
+  const loadIdentity = useCallback(
+    (signal: AbortSignal) =>
+      api<{ role: string }>("/api/icv/me", {
+        signal,
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+    [token],
+  );
+  const identity = useApi(loadIdentity);
+  const [reverseEvent, setReverseEvent] = useState("");
+  const [reason, setReason] = useState("");
+  const [result, setResult] = useState("");
+  const [reversing, setReversing] = useState(false);
   const load = useCallback(
     (signal: AbortSignal) => getProduct(id, signal),
     [id],
@@ -92,6 +108,88 @@ export default function ProductDetail() {
             {transitions.data?.length === 0 && (
               <p className="muted">No automation transitions recorded.</p>
             )}
+            {identity.data?.role === "governor" &&
+              !!transitions.data?.length && (
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    setReversing(true);
+                    setResult("");
+                    try {
+                      await api(
+                        `/api/factory/${encodeURIComponent(id)}/override`,
+                        {
+                          method: "POST",
+                          headers: {
+                            Authorization: `Bearer ${token}`,
+                            "Content-Type": "application/json",
+                          },
+                          body: JSON.stringify({
+                            eventId: reverseEvent,
+                            expectedSequence:
+                              transitions.data!.at(-1)!.sequence,
+                            reason,
+                          }),
+                        },
+                      );
+                      setResult(
+                        "Override queued. Compensation and restored progression will appear in the audit trail.",
+                      );
+                      transitions.reload();
+                      state.reload();
+                    } catch (e) {
+                      setResult(
+                        e instanceof Error ? e.message : "Override failed",
+                      );
+                    } finally {
+                      setReversing(false);
+                    }
+                  }}
+                >
+                  <h3>Override lifecycle</h3>
+                  <p>
+                    Restore the checkpoint before a transition. Execution
+                    effects require confirmed compensation. Automation then
+                    resumes using fresh operation IDs; history and final
+                    decisions remain intact.
+                  </p>
+                  <label htmlFor="reverse-event">Transition to reverse</label>
+                  <select
+                    id="reverse-event"
+                    required
+                    value={reverseEvent}
+                    onChange={(e) => setReverseEvent(e.target.value)}
+                  >
+                    <option value="">Select transition</option>
+                    {transitions.data
+                      .filter(
+                        (e) =>
+                          ![
+                            "Workflow",
+                            "Resource Allocation",
+                            "Reversal",
+                          ].includes(e.engine),
+                      )
+                      .map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {e.sequence}: {e.fromStage ?? "Intake"} → {e.toStage}{" "}
+                          ({e.engine})
+                        </option>
+                      ))}
+                  </select>
+                  <label htmlFor="reverse-reason">Override reason</label>
+                  <input
+                    id="reverse-reason"
+                    required
+                    minLength={10}
+                    maxLength={1000}
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                  />
+                  <button disabled={reversing}>Override</button>
+                  {result && <p role="status">{result}</p>}
+                </form>
+              )}
             {transitions.data?.map((event) => (
               <details key={event.id}>
                 <summary>

@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Routes, Route, Link } from "react-router-dom";
 import { GovernorLayout } from "./layouts/GovernorLayout";
 import { MainLayout } from "./layouts/MainLayout";
+import Marketplace from "./pages/Marketplace";
+import Universe from "./pages/Universe";
 import Dashboard from "./pages/Dashboard";
 import Portfolio from "./pages/Portfolio";
 import Pipeline from "./pages/Pipeline";
@@ -26,6 +28,10 @@ createRoot(document.getElementById("root")!).render(
         </a>
         <Routes>
           <Route element={<MainLayout />}>
+            <Route path="marketplace" element={<Marketplace />} />
+            <Route path="portal/universe" element={<Universe />} />
+            <Route path="portal/universe/:view" element={<Universe />} />
+            <Route path="portal/governor" element={<Universe />} />
             <Route index element={<Dashboard />} />
             <Route path="portfolio" element={<Portfolio />} />
             <Route path="pipeline" element={<Pipeline />} />
