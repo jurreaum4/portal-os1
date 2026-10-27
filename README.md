@@ -13,6 +13,17 @@ A Cloudflare monorepo: a React/Vite governor console on **Pages**, a **Worker** 
 - `src/kernel/`: compatibility exports for older consumers. Existing Dart source files remain available.
 - `wrangler.toml`: Worker entry point, D1 and Durable Object bindings.
 
+## Public marketplace and private portal
+
+The public marketplace lives in `apps/marketplace`; the existing console remains
+in `apps/pages`. All private APIs now require staff credentials, including reads,
+telemetry and kernel routes. Customer sessions never grant portal access.
+
+See [MAX ecosystem implementation](docs/07_MAX_ECOSYSTEM.md) for service contracts,
+local commands, role configuration, version-2 release automation and the remaining
+provider integrations. New runs include Package and automatic publication after
+Governor approval; legacy runs retain their existing completion semantics.
+
 ## Local development
 
 Requires Node 22.12+ and npm. From the repository root:
@@ -29,7 +40,7 @@ npm run dev:pages
 
 Open `http://localhost:5173`. Pages proxies same-origin `/api` requests to `http://127.0.0.1:8787` in local development. Set `VITE_API_URL` to the Worker origin for production Pages builds. Dashboard widgets load their own typed Worker endpoints. No provider credentials or emulators are needed for local D1 and Durable Objects: Wrangler supplies those bindings.
 
-To enable local intake, division management, factory planning and approval decisions, create `.dev.vars` at the repo root containing `GOVERNOR_API_TOKEN="<a-long-random-token>"`, restart the Worker, then enter that token in Settings. Never use a `VITE_` variable for this secret. The browser keeps the entered token in memory only. Read endpoints are public; protect the entire deployment with Cloudflare Access if your portfolio is private. This token is a minimal single-governor control; identity management and per-user roles require a separate integration.
+To enable local intake, division management, factory planning and approval decisions, create `.dev.vars` at the repo root containing `GOVERNOR_API_TOKEN="<a-long-random-token>"`, restart the Worker, then enter that credential on the portal sign-in screen. Never use a `VITE_` variable for this secret. The browser keeps the entered token in memory only. Read endpoints require staff authorisation. The existing token grants Governor access; named credentials and roles can be configured with the STAFF_CREDENTIALS secret.
 
 ```sh
 npm run typecheck
@@ -56,3 +67,7 @@ Portal-OS1 manages products across MAX Games, MAX Media, MAX Art, MAX Institute,
 See [ICVS automation](docs/06_ICVS_AUTOMATION.md) for engine behavior, recovery, audit APIs and the real executor contract. Specification and architecture are grounded in the submitted brief; simulation checks workflow reachability using unchanged MAX-CORE. Build and QA require the optional trusted `ICVS_EXECUTOR` service binding; without it projects report blocked at Build. No successful execution, artifacts or telemetry are invented.
 
 Migration 0005 adds QA and audit tables while preserving existing products, decisions, outputs and deployment records. Legacy Test, Package, Validation, Live, Published and Archived remain visible. Apply migrations before deploying. Existing Durable Object class names and bindings are preserved. A one-minute cron reconciles intake interrupted before actor activation.
+
+## MAX Universe v2
+
+[Command centres, intelligence, digital twins, XR data and execution contracts](docs/08_MAX_UNIVERSE_V2.md). Apply additive migration 0007 before upgrading the private Worker. Governors enter at `/portal/governor`; staff enter at `/portal/ecosystem`.

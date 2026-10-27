@@ -1,0 +1,74 @@
+# yaml-language-server: $schema=https://www.coderabbit.ai/integrations/schema.v2.json
+language: en-GB
+
+reviews:
+  profile: assertive
+  high_level_summary: true
+  review_status: true
+  collapse_walkthrough: false
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_instructions:
+    - path: "**/*"
+      instructions: |
+        Apply docs/PORTAL_OS1_ARCHITECTURE_AUTHORITY.md as the target architecture.
+        Preserve public/private and layer boundaries. Review tests, types and
+        error handling for changed behaviour; check secrets, input validation,
+        permissions and sensitive hot paths. Prevent duplicate business logic
+        and encourage reuse of existing contracts and MAX-CORE primitives.
+        Check every item in the authority document's review checklist.
+        Distinguish existing behaviour from target requirements: identify gaps
+        and incompatible changes explicitly, without treating targets as proof
+        that features or protections already exist. Preserve existing consumers
+        and audit history when reviewing migrations and lifecycle changes.
+    - path: "apps/pages/**"
+      instructions: |
+        Frontend only. Consume APIs; keep business policy and authorisation on
+        the server. Separate marketplace and private portal experiences.
+        Optimise for mission-control dashboards and clear operational states.
+    - path: "apps/worker/**"
+      instructions: |
+        Worker owns orchestration, APIs, governance, automation, workflows and
+        integrations. Preserve auditability and approval rules. Delegate reusable
+        lifecycle policies to ICVS and intelligence policies to portal-os;
+        do not duplicate MAX-CORE functionality.
+    - path: "icvs/**"
+      instructions: |
+        ICVS owns workflow automation, lifecycle management, approval policies,
+        forecasting and recommendation coordination, and department operations.
+        Reuse MAX-CORE. Keep policies separate from Worker transport and bindings.
+    - path: "portal-os/**"
+      instructions: |
+        Portal Intelligence layer: analytics, forecasting, recommendations,
+        opportunity detection and risk detection. Reuse shared policies and
+        MAX-CORE; do not create another state engine, runtime or storage engine.
+  labeling_instructions:
+    - label: governance
+      instructions: "Changes to governance, decision policy or governor controls."
+    - label: approvals
+      instructions: "Changes to approval gates, decisions or overrides."
+    - label: automation
+      instructions: "Changes to ICVS automation or autonomous product delivery."
+    - label: workflow
+      instructions: "Changes to lifecycle stages, transitions or recovery."
+    - label: analytics
+      instructions: "Changes to analytics, intelligence or portfolio visibility."
+    - label: forecasting
+      instructions: "Changes to forecasts, assumptions or recommendations."
+    - label: security
+      instructions: "Changes to authentication, authorisation, secrets or public/private boundaries."
+    - label: architecture
+      instructions: "Changes to layer boundaries or ecosystem architecture."
+    - label: refactor
+      instructions: "Restructuring existing code or removing duplicate logic while preserving behaviour."
+
+chat:
+  auto_reply: false
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "docs/PORTAL_OS1_ARCHITECTURE_AUTHORITY.md"

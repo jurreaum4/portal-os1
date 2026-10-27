@@ -1,3 +1,6 @@
+import { captureIntelligence } from "./universe-api";
+import { reconcileCompensation } from "./execution";
+import { protectPortal, auditAccess } from "./access";
 import kernel from "./kernel";
 import { routeApi } from "./routes/api";
 import type { Env } from "./types";
@@ -10,6 +13,8 @@ export default {
     env: Env,
     ctx: ExecutionContext,
   ) {
+    ctx.waitUntil(captureIntelligence(env));
+    ctx.waitUntil(reconcileCompensation(env));
     ctx.waitUntil(
       (async () => {
         if (!env.FACTORY_ACTOR) return;
@@ -43,9 +48,6 @@ export default {
   ): Promise<Response> {
     const path = new URL(request.url).pathname;
 
-    if (!path.startsWith("/api/") || path.startsWith("/api/kernel/"))
-      return kernel.fetch(request, env, ctx);
-
     const origin = request.headers.get("Origin");
     const allowed = (env.ALLOWED_ORIGINS ?? "")
       .split(",")
@@ -75,8 +77,22 @@ export default {
       return new Response(null, { status: 204, headers });
 
     try {
-      const upstream = await routeApi(request, env);
+      const access = await protectPortal(request, env);
+      if (access instanceof Response) {
+        ctx.waitUntil(auditAccess(env, request, null, access.status));
+        headers.forEach((value, key) => access.headers.set(key, value));
+        return access;
+      }
+      const upstream =
+        path === "/api/session"
+          ? Response.json(access)
+          : !path.startsWith("/api/") || path.startsWith("/api/kernel/")
+            ? await kernel.fetch(request, env, ctx)
+            : await routeApi(request, env);
+      if (request.method !== "GET")
+        ctx.waitUntil(auditAccess(env, request, access, upstream.status));
       const response = new Response(upstream.body, upstream);
+      response.headers.delete("Access-Control-Allow-Origin");
       headers.forEach((value, key) => response.headers.set(key, value));
       return response;
     } catch (error) {

@@ -1,18 +1,26 @@
-import { useState } from "react";
-import { getForecasts } from "../api/operations";
+import { useCallback, useState } from "react";
+import { api } from "../api/client";
 import { useApi } from "../hooks/useApi";
 import { AsyncState } from "../components/AsyncState";
+import type { revenueScenarios } from "../../../../portal-os/universe";
 import { money } from "../types";
 export default function Forecasting() {
-  const state = useApi(getForecasts);
-  const [growth, setGrowth] = useState(5);
+  const [growth, setGrowth] = useState(0);
   const [months, setMonths] = useState(3);
-  const revenue = state.data?.divisions.reduce((s, d) => s + d.revenue, 0) ?? 0;
+  const load = useCallback(
+    (signal: AbortSignal) =>
+      api<ReturnType<typeof revenueScenarios>>(
+        `/api/intelligence/forecasts?months=${months}&growth=${growth}`,
+        { signal },
+      ),
+    [months, growth],
+  );
+  const state = useApi(load);
   return (
     <>
       <div className="page-heading">
         <div>
-          <div className="eyebrow">PORTAL INTELLIGENCE</div>
+          <div className="eyebrow">PORTAL INTELLIGENCE V2</div>
           <h1>
             Forecasting<span className="title-dot">.</span>
           </h1>
@@ -20,58 +28,52 @@ export default function Forecasting() {
         </div>
         <span className="subtle-badge">Scenario planner</span>
       </div>
+      <div className="filter-toolbar forecast-controls">
+        <label>
+          Monthly growth assumption: {growth}%
+          <input
+            type="range"
+            min="-20"
+            max="30"
+            value={growth}
+            onChange={(e) => setGrowth(Number(e.target.value))}
+          />
+        </label>
+        <label>
+          Horizon
+          <select
+            value={months}
+            onChange={(e) => setMonths(Number(e.target.value))}
+          >
+            <option value="3">3 months</option>
+            <option value="6">6 months</option>
+            <option value="12">12 months</option>
+          </select>
+        </label>
+      </div>
       <AsyncState {...state} retry={state.reload} />
       {state.data && (
         <>
-          <div className="filter-toolbar forecast-controls">
-            <label>
-              Monthly growth assumption: {growth}%
-              <input
-                type="range"
-                min="-20"
-                max="30"
-                value={growth}
-                onChange={(e) => setGrowth(Number(e.target.value))}
-              />
-            </label>
-            <label>
-              Horizon
-              <select
-                value={months}
-                onChange={(e) => setMonths(Number(e.target.value))}
-              >
-                <option value="3">3 months</option>
-                <option value="6">6 months</option>
-                <option value="12">12 months</option>
-              </select>
-            </label>
-          </div>
           <div className="portfolio-summary">
             <div>
-              <strong>{money(revenue)}</strong>
-              <span>Current monthly revenue</span>
+              <strong>{money(state.data.totals.current)}</strong>
+              <span>Current reported monthly USD</span>
             </div>
             <div>
-              <strong>{money(revenue * (1 + growth / 100) ** months)}</strong>
-              <span>Projected monthly revenue at month {months}</span>
+              <strong>{money(state.data.totals.scenario)}</strong>
+              <span>Monthly revenue scenario at month {months}</span>
             </div>
             <div>
               <strong>
-                {state.data.divisions.reduce((s, d) => s + d.ready, 0)}
+                {state.data.observedGrowthPct === null
+                  ? "—"
+                  : `${state.data.observedGrowthPct}%`}
               </strong>
-              <span>Products at Ready</span>
+              <span>Observed revenue change · ≥7 day history</span>
             </div>
           </div>
           <section className="panel">
-            <div className="section-heading">
-              <div>
-                <h2>Revenue scenarios by division</h2>
-                <p>
-                  Monthly revenue in USD at month {months}. No new product
-                  revenue is assumed.
-                </p>
-              </div>
-            </div>
+            <h2>Revenue scenarios by division</h2>
             <div className="table-wrap">
               <table>
                 <thead>
@@ -89,21 +91,17 @@ export default function Forecasting() {
                       <td>
                         <strong>{d.name}</strong>
                       </td>
-                      <td>{money(d.revenue)}</td>
-                      <td>{money(d.revenue * 0.95 ** months)}</td>
-                      <td className="forecast-value">
-                        {money(d.revenue * (1 + growth / 100) ** months)}
-                      </td>
-                      <td>{money(d.revenue * 1.1 ** months)}</td>
+                      <td>{money(d.current)}</td>
+                      <td>{money(d.conservative)}</td>
+                      <td>{money(d.scenario)}</td>
+                      <td>{money(d.optimistic)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
             <p className="muted">
-              Scenario estimates use reported revenue and compound growth
-              assumptions. Historical revenue and predictive models are not
-              available.
+              {state.data.method} No new product revenue is assumed.
             </p>
           </section>
         </>

@@ -85,6 +85,14 @@ export interface Recommendation {
   score: number;
 }
 export interface Department {
+  capacity: number | null;
+  capacityUnit: string;
+  workload: number;
+  backlog: number;
+  completed7d: number;
+  sampledAt: string;
+  forecasts: { daysToClear: number | null; method: string };
+  recommendations: string[];
   id: string;
   name: string;
   description: string;

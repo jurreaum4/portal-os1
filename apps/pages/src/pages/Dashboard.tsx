@@ -88,7 +88,7 @@ export default function Dashboard() {
           </button>
           <Link className="button primary" to="/orchestration">
             <Icon name="plus" size={16} />
-            New product
+            Product factory
           </Link>
         </div>
       </div>

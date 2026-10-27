@@ -1,3 +1,11 @@
+import {
+  validatePackage,
+  validatePublication,
+  type ReleasePackage,
+  type Publication,
+} from "../../../icvs/releases";
+import { sha256 } from "./access";
+import { executeTracked, executionCapacity } from "./execution";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./types";
 import {
@@ -26,6 +34,10 @@ interface Event {
   at: string;
 }
 interface Workflow {
+  version?: 2;
+  package?: ReleasePackage;
+  packageDigest?: string;
+  publication?: Publication;
   id: string;
   productId: string;
   brief: Brief;
@@ -54,6 +66,7 @@ export class ProductFactoryActor extends DurableObject<Env> {
         status?: string;
         note?: string;
         owner?: string;
+        actor?: string;
       };
       const path = new URL(request.url).pathname;
       if (path === "/allocate" || path === "/release")
@@ -80,6 +93,15 @@ export class ProductFactoryActor extends DurableObject<Env> {
             { error: "Approval has already been decided" },
             { status: 409 },
           );
+        if (
+          state.version === 2 &&
+          body.status !== "rejected" &&
+          (!state.package || !state.packageDigest)
+        )
+          return Response.json(
+            { error: "Verified package required" },
+            { status: 409 },
+          );
         state.decision = { status: body.status!, note: body.note ?? "" };
         await this.ctx.storage.setAlarm(Date.now() + RETRY_MS);
         await this.transition(
@@ -91,10 +113,12 @@ export class ProductFactoryActor extends DurableObject<Env> {
                 state.decision.note || "Governor rejected promotion",
               )
             : promotionEngine(state.build, state.qa),
-          "governor",
+          body.actor ?? "governor",
           state.decision.note || body.status!,
         );
-        await this.ctx.storage.deleteAlarm();
+        if (state.version === 2 && state.stage === "Ready")
+          await this.ctx.storage.setAlarm(Date.now() + 1);
+        else await this.ctx.storage.deleteAlarm();
         return Response.json({ success: true, status: body.status });
       }
       if (state) {
@@ -140,6 +164,7 @@ export class ProductFactoryActor extends DurableObject<Env> {
         );
       }
       state = {
+        version: existing ? undefined : 2,
         id: existing?.id ?? crypto.randomUUID(),
         productId: body.productId,
         brief: { name: product.name, description: product.description },
@@ -183,7 +208,10 @@ export class ProductFactoryActor extends DurableObject<Env> {
             error instanceof Error ? error.message : "Execution unavailable",
           );
       }
-      if (!state.pending && (state.status === "completed" || state.approvalId))
+      if (
+        !state.pending &&
+        (state.status === "completed" || (state.approvalId && !state.decision))
+      )
         await this.ctx.storage.deleteAlarm();
       else if (!state.pending && state.status === "running")
         await this.ctx.storage.setAlarm(Date.now() + 1);
@@ -191,6 +219,7 @@ export class ProductFactoryActor extends DurableObject<Env> {
   }
 
   private async advance(state: Workflow) {
+    if (state.approvalId && !state.decision) return;
     switch (state.stage) {
       case "Idea":
         return this.transition(
@@ -253,43 +282,47 @@ export class ProductFactoryActor extends DurableObject<Env> {
         let finished = false;
         try {
           const operationId = owner;
-          const response = await this.env.ICVS_EXECUTOR.fetch(
+          const evidence = await executeTracked(
+            this.env,
+            {
+              id: operationId,
+              productId: state.productId,
+              runId: state.id,
+              worker: state.stage,
+              leaseExpiresAt: lease.expiresAt,
+            },
+            this.env.ICVS_EXECUTOR,
             "https://executor.internal/execute",
             {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Idempotency-Key": operationId,
-              },
-              body: JSON.stringify({
-                operationId,
-                leaseExpiresAt: lease.expiresAt,
-                productId: state.productId,
-                runId: state.id,
-                stage: state.stage,
-                specification: specificationEngine(state.brief),
-                architecture: architectureEngine(state.brief),
-                build: state.build,
-              }),
-              signal: AbortSignal.timeout(20_000),
+              operationId,
+              leaseExpiresAt: lease.expiresAt,
+              productId: state.productId,
+              runId: state.id,
+              stage: state.stage,
+              specification: specificationEngine(state.brief),
+              architecture: architectureEngine(state.brief),
+              build: state.build,
             },
+            (input) =>
+              validateEvidence(
+                input,
+                operationId,
+                state.stage === "QA",
+                state.build,
+              ),
           );
-          if (response.status === 202)
+          if (!evidence)
             return this.block(state, "Executor is processing the operation");
-          if (!response.ok)
-            throw new Error(`Executor returned HTTP ${response.status}`);
-          const evidence = validateEvidence(
-            await response.json(),
-            operationId,
-            state.stage === "QA",
-            state.build,
-          );
           finished = true;
           if (state.stage === "Build") {
             state.build = evidence;
             await this.transition(state, "QA", "Build", evidence);
           } else {
             state.qa = evidence;
+            if (state.version === 2) {
+              await this.transition(state, "Package", "QA", evidence);
+              return;
+            }
             state.approvalId = crypto.randomUUID();
             await this.transition(
               state,
@@ -309,7 +342,131 @@ export class ProductFactoryActor extends DurableObject<Env> {
         }
         return;
       }
+      case "Package": {
+        if (!this.env.ICVS_EXECUTOR || !state.build || !state.qa)
+          return this.block(
+            state,
+            "Package executor and verified build/QA are required",
+          );
+        const operationId = `${state.id}:Package`;
+        const packaged = await this.leasedExecution(
+          state,
+          "Package",
+          this.env.ICVS_EXECUTOR,
+          "https://executor.internal/execute",
+          {
+            operationId,
+            productId: state.productId,
+            runId: state.id,
+            stage: "Package",
+            build: state.build,
+            qa: state.qa,
+          },
+          (input) =>
+            validatePackage(input, operationId, state.build!, state.qa!),
+        );
+        if (!packaged)
+          return this.block(
+            state,
+            "Packaging is pending or awaiting execution capacity",
+          );
+        state.package = packaged;
+        state.packageDigest = await sha256(JSON.stringify(state.package));
+        state.approvalId = crypto.randomUUID();
+        return this.transition(
+          state,
+          "Package",
+          "Promotion",
+          { package: state.package, packageDigest: state.packageDigest },
+          "automation",
+          "Package verified; awaiting governor release decision",
+        );
+      }
+      case "Ready": {
+        if (state.version !== 2) return;
+        if (
+          !state.package ||
+          !state.packageDigest ||
+          !state.decision ||
+          state.decision.status === "rejected"
+        )
+          throw new Error("Release approval and package are required");
+        if (!this.env.ICVS_PUBLISHER)
+          return this.block(
+            state,
+            "Publishing service binding is not configured",
+          );
+        const operationId = `${state.id}:Publish`;
+        const publication = await this.leasedExecution(
+          state,
+          "Publishing",
+          this.env.ICVS_PUBLISHER,
+          "https://publisher.internal/publish",
+          {
+            operationId,
+            productId: state.productId,
+            runId: state.id,
+            package: state.package,
+            packageDigest: state.packageDigest,
+            approvalId: state.approvalId,
+          },
+          (input) =>
+            validatePublication(input, operationId, state.packageDigest!),
+        );
+        if (!publication)
+          return this.block(
+            state,
+            "Publishing is pending or awaiting execution capacity",
+          );
+        state.publication = publication;
+        return this.transition(
+          state,
+          "Published",
+          "Publishing",
+          state.publication,
+        );
+      }
     }
+  }
+
+  private async leasedExecution<T>(
+    state: Workflow,
+    worker: string,
+    binding: Fetcher,
+    url: string,
+    body: Record<string, unknown>,
+    validate: (input: unknown) => T,
+  ): Promise<T | null> {
+    const id = String(body.operationId);
+    const resource = this.env.FACTORY_ACTOR!.get(
+      this.env.FACTORY_ACTOR!.idFromName("icvs:resource-allocation"),
+    );
+    const allocation = await resource.fetch(
+      "https://factory.internal/allocate",
+      { method: "POST", body: JSON.stringify({ owner: id }) },
+    );
+    if (!allocation.ok) return null;
+    const lease = (await allocation.json()) as { expiresAt: number };
+    const evidence = await executeTracked(
+      this.env,
+      {
+        id,
+        productId: state.productId,
+        runId: state.id,
+        worker,
+        leaseExpiresAt: lease.expiresAt,
+      },
+      binding,
+      url,
+      { ...body, leaseExpiresAt: lease.expiresAt },
+      validate,
+    );
+    if (evidence)
+      await resource.fetch("https://factory.internal/release", {
+        method: "POST",
+        body: JSON.stringify({ owner: id }),
+      });
+    return evidence;
   }
 
   private async block(state: Workflow, message: string) {
@@ -348,11 +505,14 @@ export class ProductFactoryActor extends DurableObject<Env> {
     };
     state.stage = to;
     state.sequence++;
-    state.status = ["Ready", "Archived"].includes(to)
-      ? "completed"
-      : blocked
-        ? "blocked"
-        : "running";
+    state.status =
+      to === "Archived" ||
+      to === "Published" ||
+      (to === "Ready" && state.version !== 2)
+        ? "completed"
+        : blocked
+          ? "blocked"
+          : "running";
     state.message = reason;
     await this.ctx.storage.put("workflow", state);
     await this.project(state);
@@ -431,7 +591,7 @@ export class ProductFactoryActor extends DurableObject<Env> {
       statements.push(
         db
           .prepare(
-            "INSERT OR IGNORE INTO approvals(id,product_id,action,priority,risk) VALUES (?,?,'Promote verified project to Ready','Medium','Low')",
+            "INSERT OR IGNORE INTO approvals(id,product_id,action,priority,risk) VALUES (?,?,'Approve verified release package','Medium','Low')",
           )
           .bind(state.approvalId, state.productId),
         db
@@ -454,6 +614,70 @@ export class ProductFactoryActor extends DurableObject<Env> {
             ),
         );
     }
+    if (state.stage === "Published" && state.package && state.publication) {
+      const release = state.package;
+      statements.push(
+        db
+          .prepare(
+            "INSERT INTO marketplace_creators(id,slug,name,bio) VALUES (?,?,?,?) ON CONFLICT(id) DO NOTHING",
+          )
+          .bind(
+            release.creator.id,
+            release.creator.slug,
+            release.creator.name,
+            release.creator.bio,
+          ),
+        db
+          .prepare(
+            "INSERT INTO marketplace_releases(id,product_id,slug,title,summary,type,creator_id,price_minor,currency,artifact,digest,download_ref) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
+          )
+          .bind(
+            state.id,
+            state.productId,
+            release.slug,
+            release.title,
+            release.summary,
+            release.type,
+            release.creator.id,
+            release.priceMinor,
+            release.currency,
+            release.artifact,
+            release.digest,
+            state.publication.downloadReference,
+          ),
+        db
+          .prepare(
+            "INSERT OR IGNORE INTO deployments(id,product_id,environment,status) VALUES (?,?,'marketplace','succeeded')",
+          )
+          .bind(`${state.id}:Publish`, state.productId),
+      );
+    }
+    if (
+      state.version === 2 &&
+      state.stage === "Archived" &&
+      state.decision?.status === "rejected" &&
+      state.build &&
+      state.packageDigest &&
+      state.approvalId
+    ) {
+      statements.push(
+        db
+          .prepare(
+            "INSERT OR IGNORE INTO compensation_jobs(id,product_id,run_id,approval_id,status,plan) VALUES (?,?,?,?,'queued',?)",
+          )
+          .bind(
+            `${state.id}:Compensate`,
+            state.productId,
+            state.id,
+            state.approvalId,
+            JSON.stringify({
+              buildArtifact: state.build.artifact,
+              buildDigest: state.build.digest,
+              packageDigest: state.packageDigest,
+            }),
+          ),
+      );
+    }
     await db.batch(statements);
     delete state.pending;
     await this.ctx.storage.put("workflow", state);
@@ -470,11 +694,7 @@ export class ProductFactoryActor extends DurableObject<Env> {
       if (expires <= now) delete leases[key];
     if (path === "/release") delete leases[owner];
     else {
-      const configured = Number(this.env.ICVS_EXECUTION_SLOTS ?? 2);
-      const capacity =
-        Number.isInteger(configured) && configured > 0 && configured <= 100
-          ? configured
-          : 2;
+      const capacity = executionCapacity(this.env.ICVS_EXECUTION_SLOTS);
       if (!leases[owner] && Object.keys(leases).length >= capacity)
         return Response.json({ allocated: false }, { status: 429 });
       leases[owner] = now + 60_000;

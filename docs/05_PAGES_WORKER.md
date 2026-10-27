@@ -1,5 +1,9 @@
 # Pages and Worker boundary
 
+The original endpoint shapes below remain available behind staff authorisation.
+See [MAX ecosystem implementation](07_MAX_ECOSYSTEM.md) for the current access
+boundary, separate public API, marketplace and version-2 release workflow.
+
 ```mermaid
 flowchart LR
   Browser --> Pages[Cloudflare Pages: React]
@@ -12,7 +16,7 @@ The ICVS cognitive bridge remains in `icvs/index.ts`. The automation layer coord
 
 ## API
 
-All responses are JSON. New endpoints return 404 for unknown routes or IDs, 405 for unsupported methods, and generic 500 errors if storage fails. Legacy `/api/kernel/*` behavior and root status are preserved, including the existing wildcard kernel CORS policy. The existing recovery and ICVS ingestion URLs in the Dart client are still placeholders in the kernel and are not implemented by this change.
+All responses are JSON. New endpoints return 404 for unknown routes or IDs, 405 for unsupported methods, and generic 500 errors if storage fails. Legacy `/api/kernel/*` behavior and root status are preserved, behind the same staff authorisation and exact-origin CORS policy. The existing recovery and ICVS ingestion URLs in the Dart client are still placeholders in the kernel and are not implemented by this change.
 
 | Endpoint                          | Response                                                                              |
 | --------------------------------- | ------------------------------------------------------------------------------------- |
@@ -32,7 +36,7 @@ Product fields: `id`, `name`, `description`, `stage`, `score` (0–100), `update
 
 Decision requests require `Authorization: Bearer <GOVERNOR_API_TOKEN>`. Missing server configuration returns 503; invalid authorization returns 401. Decisions atomically update only pending requests; a second decision returns 409, a nonexistent ID returns 404. Changes persist in D1. SQL values are parameterized. The API accepts validated new product intake and division creation; it does not accept arbitrary product edits.
 
-The new API allows browser origins listed in comma-separated `ALLOWED_ORIGINS`. Configure exact scheme/host/port values. OPTIONS permits Content-Type and Authorization. Disallowed browser origins receive 403. CORS is not authentication; non-browser clients can access public read routes. API responses use `Cache-Control: no-store`.
+The new API allows browser origins listed in comma-separated `ALLOWED_ORIGINS`. Configure exact scheme/host/port values. OPTIONS permits Content-Type and Authorization. Disallowed browser origins receive 403. CORS is not authentication; non-browser clients must also provide staff credentials for operational routes. API responses use `Cache-Control: no-store`.
 
 ## Cloudflare deployment
 
