@@ -1,3 +1,4 @@
+import { orderedLifecycleStages } from "../icvs/definition";
 import type { Env } from "../types";
 import { operationalApi, revenueScenarios } from "../operations";
 import type { Twin, Relationship, Universe } from "./model";
@@ -60,15 +61,13 @@ export async function universe(env: Env): Promise<Universe> {
       capacity: number | null;
       stages: string;
     }>(),
-    db
-      .prepare("SELECT id FROM lifecycle_stages ORDER BY position")
-      .all<{ id: string }>(),
+    orderedLifecycleStages(db),
     db
       .prepare(
-        `WITH changes AS (SELECT run_id,from_stage,to_stage,created_at,
+        `WITH changes AS (SELECT run_id,from_stage,to_stage,engine,created_at,
       LAG(created_at) OVER (PARTITION BY run_id ORDER BY sequence) AS previous_at FROM workflow_events WHERE from_stage IS NULL OR from_stage!=to_stage)
       SELECT from_stage AS stage,COUNT(*) AS samples,AVG((julianday(created_at)-julianday(previous_at))*24) AS hours
-      FROM changes WHERE previous_at IS NOT NULL GROUP BY from_stage`,
+      FROM changes WHERE previous_at IS NOT NULL AND engine!='Reversal' GROUP BY from_stage`,
       )
       .all<{ stage: string; samples: number; hours: number }>(),
     db
@@ -279,6 +278,16 @@ export async function universe(env: Env): Promise<Universe> {
         : "On track"
       : "No observations";
   }
+  const workflowStages: Record<string, string[]> = {};
+  const semanticStages = (
+    await db
+      .prepare(
+        "SELECT DISTINCT json_extract(step.value,'$.engine') AS engine,json_extract(step.value,'$.stage') AS stage FROM workflow_definitions w,json_each(w.definition,'$.steps') step",
+      )
+      .all<{ engine: string; stage: string }>()
+  ).results;
+  for (const step of semanticStages)
+    (workflowStages[step.engine] ??= []).push(step.stage);
   const active = await db
     .prepare("SELECT definition FROM workflow_definitions WHERE active=1")
     .first<string>("definition");
@@ -325,7 +334,7 @@ export async function universe(env: Env): Promise<Universe> {
         optimistic: f.optimistic,
       };
   }
-  const pipeline = stages.results.map(({ id }) => {
+  const pipeline = stages.map((id) => {
     const queued = products.results.filter((p) => p.stage === id);
     const sample = durations.results.find((d) => d.stage === id);
     return {
@@ -426,6 +435,7 @@ export async function universe(env: Env): Promise<Universe> {
   };
   place("ecosystem:max", 0);
   return {
+    workflowStages,
     schemaVersion: 1,
     sampledAt: new Date().toISOString(),
     nodes,
@@ -456,7 +466,13 @@ export async function universe(env: Env): Promise<Universe> {
       {
         id: "ICVS executor",
         status: env.ICVS_EXECUTOR ? "Configured" : "Not connected",
-        detail: "Actual Build, QA and Publish evidence required",
+        detail:
+          "Actual Build, QA, Package, Publish and compensation evidence required",
+      },
+      {
+        id: "Marketplace commerce",
+        status: env.MAX_MARKETPLACE ? "Configured" : "Not connected",
+        detail: "Purchases, ownership and delivery remain with MAX Marketplace",
       },
       ...["Marketplace", "Sports", "Competitive intelligence"].map((id) => ({
         id,

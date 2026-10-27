@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { api } from "../api/client";
 import { useGovernor } from "../layouts/GovernorLayout";
@@ -9,6 +9,7 @@ import type {
   Universe as UniverseData,
   Twin,
 } from "../../../worker/src/universe/model";
+import { Bemax } from "../components/Bemax";
 import Approvals from "./Approvals";
 import "./Universe.css";
 
@@ -100,8 +101,13 @@ export default function Universe() {
     [division, setDivision] = useState("all"),
     [size, setSize] = useState("revenue"),
     [colorMode, setColorMode] = useState("health"),
-    [selected, setSelected] = useState<string | null>(null),
+    [selected, setSelected] = useState<string | null>(
+      new URLSearchParams(location.search).get("entity"),
+    ),
     [zoom, setZoom] = useState(1);
+  useEffect(() => {
+    setSelected(new URLSearchParams(location.search).get("entity"));
+  }, [location.search]);
   const data = state.data;
   const divisions =
     data?.nodes.filter(
@@ -183,6 +189,7 @@ export default function Universe() {
       <AsyncState {...state} retry={state.reload} />
       {data && (
         <>
+          {governor && <Bemax />}
           <section className="u-metrics" aria-label="Ecosystem summary">
             {[
               [
@@ -789,6 +796,45 @@ export default function Universe() {
           )}
           {governor && (
             <>
+              <section className="panel">
+                <h2>Department status</h2>
+                <div className="u-card-grid">
+                  {data.departments.map((d) => (
+                    <article key={d.id}>
+                      <h3>{d.name}</h3>
+                      <p>
+                        {d.health} · Workload {d.workload} · Backlog {d.backlog}
+                      </p>
+                      <small>Capacity {d.capacity ?? "not configured"}</small>
+                    </article>
+                  ))}
+                </div>
+                <Link to="/portal/universe/departments">
+                  Department operations →
+                </Link>
+              </section>
+              <section className="panel">
+                <h2>Publishing status</h2>
+                <p>
+                  {
+                    data.nodes.filter(
+                      (n) =>
+                        n.kind === "product" &&
+                        data.workflowStages.ready?.includes(n.stage ?? ""),
+                    ).length
+                  }{" "}
+                  Ready ·{" "}
+                  {
+                    data.nodes.filter(
+                      (n) =>
+                        n.kind === "product" &&
+                        data.workflowStages.publish?.includes(n.stage ?? ""),
+                    ).length
+                  }{" "}
+                  Published
+                </p>
+                <Link to="/marketplace">Open public Marketplace →</Link>
+              </section>
               <section className="panel">
                 <h2>Risks</h2>
                 {data.nodes

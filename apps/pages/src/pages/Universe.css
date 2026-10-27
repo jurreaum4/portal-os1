@@ -368,3 +368,50 @@
     font-size: 19px;
   }
 }
+.bemax-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+.bemax-prompts button {
+  text-align: left;
+}
+.bemax-input {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+.bemax-input input {
+  flex: 1;
+  min-width: 0;
+}
+.bemax-answer {
+  border-top: 1px solid var(--border);
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+}
+.bemax-answer > div {
+  padding: 0.75rem 0;
+}
+.bemax-answer p {
+  margin: 0.5rem 0;
+}
+.bemax-answer small {
+  color: var(--muted);
+}
+.bemax h2 {
+  font-size: 24px;
+  margin: 0.4rem 0;
+}
+.bemax-input input {
+  border: 1px solid #d9dfeb;
+  border-radius: 8px;
+  padding: 12px;
+  font: inherit;
+  color: inherit;
+}
+.bemax-input input:focus {
+  outline: 2px solid #8c78df;
+  outline-offset: 2px;
+}

@@ -1,4 +1,5 @@
 export interface Env {
+  MAX_MARKETPLACE?: Fetcher;
   UNIVERSE_VIEWER_TOKEN?: string;
   UNIVERSE_AUTOMATION_TOKEN?: string;
   ICVS_EXECUTOR?: Fetcher;

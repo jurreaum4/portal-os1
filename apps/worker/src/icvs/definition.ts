@@ -24,6 +24,7 @@ export async function loadDefinition(
     "simulation",
     "build",
     "qa",
+    "package",
     "ready",
     "publish",
   ]);
@@ -45,7 +46,11 @@ export async function loadDefinition(
     steps.findIndex((s) => s.engine === "qa") !==
       steps.findIndex((s) => s.engine === "build") + 1 ||
     steps.findIndex((s) => s.engine === "ready") !==
-      steps.findIndex((s) => s.engine === "qa") + 1 ||
+      steps.findIndex((s) => s.engine === "qa") +
+        (steps.some((s) => s.engine === "package") ? 2 : 1) ||
+    (steps.some((s) => s.engine === "package") &&
+      steps.findIndex((s) => s.engine === "package") !==
+        steps.findIndex((s) => s.engine === "qa") + 1) ||
     (steps.some((s) => s.engine === "publish") &&
       steps.findIndex((s) => s.engine === "publish") !==
         steps.findIndex((s) => s.engine === "ready") + 1)
@@ -57,4 +62,22 @@ export async function loadDefinition(
   if (steps.some((s) => !registered.some((r) => r.id === s.stage)))
     throw new Error("Workflow stage is not registered");
   return definition;
+}
+
+/** Active workflow first; retained historical stages remain visible after it. */
+export async function orderedLifecycleStages(
+  db: D1Database,
+): Promise<string[]> {
+  const definition = await loadDefinition(db);
+  const registered = (
+    await db
+      .prepare("SELECT id FROM lifecycle_stages ORDER BY position")
+      .all<{ id: string }>()
+  ).results;
+  return [
+    ...new Set([
+      ...definition.steps.map((s) => s.stage),
+      ...registered.map((s) => s.id),
+    ]),
+  ];
 }

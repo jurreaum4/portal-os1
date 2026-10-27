@@ -62,3 +62,7 @@ Portal-OS1 manages products across MAX Games, MAX Media, MAX Art, MAX Institute,
 See [ICVS automation](docs/06_ICVS_AUTOMATION.md) for engine behavior, recovery, audit APIs and the real executor contract. Specification and architecture are grounded in the submitted brief; simulation checks workflow reachability using unchanged MAX-CORE. Build and QA require the optional trusted `ICVS_EXECUTOR` service binding; without it projects report blocked at Build. No successful execution, artifacts or telemetry are invented.
 
 Migration 0005 adds QA and audit tables while preserving existing products, decisions, outputs and deployment records. Legacy Test, Package, Validation, Live, Published and Archived remain visible. Apply migrations through 0006 before deploying. Existing Durable Object class names and bindings are preserved. A one-minute cron reconciles intake interrupted before actor activation.
+
+### Final Universe extension
+
+The Governor console now includes grounded BEMAX questions, ICV identity resolution, versioned Package execution and governed checkpoint reversal. The public `/marketplace` catalog delegates account and commerce operations to MAX Marketplace. See [final integration contracts and current provider limits](docs/08_FINAL_UNIVERSE.md).

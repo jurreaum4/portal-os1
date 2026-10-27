@@ -12,25 +12,20 @@ export async function authorize(
   request: Request,
   env: Env,
 ): Promise<Response | null> {
-  if (!env.GOVERNOR_API_TOKEN)
-    return Response.json(
-      { error: "Governor decisions are not configured" },
-      { status: 503 },
-    );
-  const digest = async (value: string) =>
-    new Uint8Array(
-      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)),
-    );
-  const [actual, expected] = await Promise.all([
-    digest(request.headers.get("Authorization") ?? ""),
-    digest(`Bearer ${env.GOVERNOR_API_TOKEN}`),
-  ]);
-  return actual.reduce((diff, byte, i) => diff | (byte ^ expected[i]), 0)
-    ? Response.json(
-        { error: "Governor authorization required" },
-        { status: 401 },
-      )
-    : null;
+  if ((await roleOf(request, env)) === "governor") return null;
+  const configured =
+    env.GOVERNOR_API_TOKEN ||
+    (await env.DB.prepare(
+      "SELECT id FROM icv_principals WHERE role='governor' AND disabled=0 LIMIT 1",
+    ).first());
+  return Response.json(
+    {
+      error: configured
+        ? "Governor authorization required"
+        : "Governor decisions are not configured",
+    },
+    { status: configured ? 401 : 503 },
+  );
 }
 export interface OperationalProduct {
   id: string;

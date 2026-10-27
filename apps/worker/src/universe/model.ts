@@ -37,6 +37,7 @@ export interface Relationship {
 }
 export interface Universe {
   access?: { role: string; canDecide: boolean };
+  workflowStages: Record<string, string[]>;
   schemaVersion: 1;
   sampledAt: string;
   nodes: Twin[];
@@ -80,4 +81,13 @@ export interface Universe {
   modules: { id: string; name: string; category: string }[];
   integrations: { id: string; status: string; detail: string }[];
   methodology: string[];
+}
+
+export interface BemaxAnswer {
+  intent: string;
+  answer: string;
+  sampledAt: string;
+  method: string;
+  items: { title: string; detail: string; href: string; source: string }[];
+  limitations: string[];
 }

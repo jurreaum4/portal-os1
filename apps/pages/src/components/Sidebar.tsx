@@ -46,6 +46,10 @@ export function Sidebar() {
           <Icon name="governance" />
           Governor console
         </NavLink>
+        <NavLink to="/marketplace">
+          <Icon name="products" />
+          Marketplace
+        </NavLink>
       </nav>
       <div className="workspace-label">WORKSPACE</div>
       <nav aria-label="Main navigation">

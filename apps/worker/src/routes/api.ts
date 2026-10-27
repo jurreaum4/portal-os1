@@ -1,3 +1,7 @@
+import { orderedLifecycleStages } from "../icvs/definition";
+import { marketplaceApi } from "../universe/marketplace";
+import { identityOf } from "../universe/security";
+import { bemaxApi } from "../universe/bemax";
 import { universeApi } from "../universe/api";
 import type { Env } from "../types";
 
@@ -6,10 +10,72 @@ const json = (value: unknown, status = 200) => Response.json(value, { status });
 
 export async function routeApi(request: Request, env: Env): Promise<Response> {
   const path = new URL(request.url).pathname;
+  if (path === "/api/icv/me") {
+    if (request.method !== "GET")
+      return json({ error: "Method not allowed" }, 405);
+    const identity = await identityOf(request, env);
+    return identity
+      ? json(identity)
+      : json({ error: "Identity required" }, 401);
+  }
+  const marketplace = await marketplaceApi(request, env);
+  if (marketplace) return marketplace;
+  const bemax = await bemaxApi(request, env);
+  if (bemax) return bemax;
   const universe = await universeApi(request, env);
   if (universe) return universe;
   const operational = await operationalApi(request, env);
   if (operational) return operational;
+  const reversal = path.match(/^\/api\/factory\/([^/]+)\/override$/);
+  if (reversal) {
+    if (request.method !== "POST")
+      return json({ error: "Method not allowed" }, 405);
+    const denied = await authorize(request, env);
+    if (denied) return denied;
+    let body: {
+      eventId?: unknown;
+      reason?: unknown;
+      expectedSequence?: unknown;
+    };
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: "Invalid JSON" }, 400);
+    }
+    if (
+      !body ||
+      !Number.isSafeInteger(body.expectedSequence) ||
+      typeof body.eventId !== "string" ||
+      body.eventId.length > 200 ||
+      typeof body.reason !== "string" ||
+      body.reason.trim().length < 10 ||
+      body.reason.length > 1000
+    )
+      return json(
+        { error: "Event ID and reason of 10–1000 characters required" },
+        400,
+      );
+    if (!env.FACTORY_ACTOR) return json({ error: "Factory unavailable" }, 503);
+    let productId: string;
+    try {
+      productId = decodeURIComponent(reversal[1]);
+    } catch {
+      return json({ error: "Invalid product ID" }, 400);
+    }
+    return env.FACTORY_ACTOR.get(env.FACTORY_ACTOR.idFromName(productId)).fetch(
+      "https://factory.internal/reverse",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          productId,
+          reverseEventId: body.eventId,
+          expectedSequence: body.expectedSequence,
+          note: body.reason.trim(),
+          actor: (await identityOf(request, env))!.id.replace(/^service:/, ""),
+        }),
+      },
+    );
+  }
   const decision = path.match(
     /^\/api\/approvals\/([^/]+)\/(approve|reject|override)$/,
   );
@@ -66,6 +132,7 @@ export async function routeApi(request: Request, env: Env): Promise<Response> {
           approvalId: id,
           status,
           note,
+          actor: (await identityOf(request, env))!.id.replace(/^service:/, ""),
         }),
       });
     }
@@ -133,11 +200,7 @@ export async function routeApi(request: Request, env: Env): Promise<Response> {
       ).results,
     );
   if (path === "/api/pipeline") {
-    const stages = (
-      await env.DB.prepare(
-        "SELECT id FROM lifecycle_stages ORDER BY position",
-      ).all<{ id: string }>()
-    ).results.map((s) => s.id);
+    const stages = await orderedLifecycleStages(env.DB);
     const rows = (
       await env.DB.prepare(
         `SELECT ${productColumns} FROM products ORDER BY name`,

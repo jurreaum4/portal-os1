@@ -33,9 +33,10 @@ export default function Settings() {
         </code>
         <h2 className="subheading">Universe access</h2>
         <p className="muted">
-          Use a viewer credential to explore the Universe, or a governor
-          credential to approve, reject and override. Credentials stay in memory
-          for this tab and clear on reload.
+          Use an ICV member credential for your Marketplace library, a viewer
+          credential to explore the Universe, or a governor credential to
+          approve, reject and override. Credentials stay in memory for this tab
+          and clear on reload.
         </p>
         <form
           onSubmit={(event) => {

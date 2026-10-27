@@ -42,6 +42,17 @@ interface Workflow {
   decision?: { status: string; note: string };
   build?: ExecutionEvidence;
   qa?: ExecutionEvidence;
+  package?: ExecutionEvidence;
+  epoch?: number;
+  reversal?: {
+    eventId: string;
+    reason: string;
+    actor: string;
+    operationId: string;
+    external: boolean;
+    events: unknown[];
+    approvalId?: string;
+  };
 }
 const RETRY_MS = 30_000;
 
@@ -59,6 +70,9 @@ export class ProductFactoryActor extends DurableObject<Env> {
         status?: string;
         note?: string;
         owner?: string;
+        actor?: string;
+        reverseEventId?: string;
+        expectedSequence?: number;
       };
       const path = new URL(request.url).pathname;
       if (path === "/allocate" || path === "/release")
@@ -72,6 +86,90 @@ export class ProductFactoryActor extends DurableObject<Env> {
       if (state) {
         state.definition ??= await loadDefinition(this.env.DB, true);
         await this.project(state);
+      }
+      if (path === "/reverse") {
+        if (!state || !body.reverseEventId || !body.note || !body.actor)
+          return Response.json(
+            { error: "Reversal requires event, reason and actor" },
+            { status: 400 },
+          );
+        if (state.reversal)
+          return Response.json(
+            { error: "Reversal already pending" },
+            { status: 409 },
+          );
+        if (
+          body.expectedSequence !== state.sequence ||
+          !body.reverseEventId.startsWith(`${state.id}:`)
+        )
+          return Response.json(
+            { error: "Workflow changed; reload the audit trail" },
+            { status: 409 },
+          );
+        const checkpoint = await this.ctx.storage.get<Workflow>(
+          `checkpoint:${body.reverseEventId}`,
+        );
+        if (!checkpoint)
+          return Response.json(
+            { error: "No reversible checkpoint exists for this transition" },
+            { status: 409 },
+          );
+        const event = await this.env.DB.prepare(
+          "SELECT engine FROM workflow_events WHERE id=?",
+        )
+          .bind(body.reverseEventId)
+          .first<{ engine: string }>();
+        if (
+          !event ||
+          ["Reversal", "Workflow", "Resource Allocation"].includes(event.engine)
+        )
+          return Response.json(
+            {
+              error:
+                "This journal entry is not a reversible lifecycle transition",
+            },
+            { status: 409 },
+          );
+        const events = (
+          await this.env.DB.prepare(
+            "SELECT id,engine,from_stage,to_stage,evidence FROM workflow_events WHERE run_id=? AND sequence>? ORDER BY sequence",
+          )
+            .bind(state.id, checkpoint.sequence)
+            .all<{ id: string; engine: string; evidence: string }>()
+        ).results;
+        const external = events.some(
+          (e) =>
+            ["Build", "QA", "Publishing"].includes(e.engine) ||
+            (e.engine === "Promotion" && !!state!.package),
+        );
+        if (external && !this.env.ICVS_EXECUTOR)
+          return Response.json(
+            { error: "Executor compensation is required" },
+            { status: 503 },
+          );
+        state.reversal = {
+          eventId: body.reverseEventId,
+          reason: body.note,
+          actor: body.actor,
+          operationId: `${state.id}:${state.sequence}:reverse:${checkpoint.sequence}`,
+          external,
+          events,
+          approvalId: state.approvalId,
+        };
+        await this.ctx.storage.setAlarm(Date.now() + RETRY_MS);
+        await this.transition(
+          state,
+          state.stage,
+          "Workflow",
+          { blocked: true, reverses: body.reverseEventId },
+          body.actor,
+          "Reversal accepted; awaiting compensation and checkpoint restoration",
+        );
+        await this.ctx.storage.setAlarm(Date.now() + 1);
+        return Response.json(
+          { accepted: true, operationId: state.reversal!.operationId },
+          { status: 202 },
+        );
       }
       if (path === "/decision") {
         if (
@@ -101,7 +199,7 @@ export class ProductFactoryActor extends DurableObject<Env> {
                 state.decision.note || "Governor rejected promotion",
               )
             : promotionEngine(state.build, state.qa),
-          "governor",
+          body.actor ?? "governor",
           state.decision.note || body.status!,
         );
         if (state.status === "completed") await this.ctx.storage.deleteAlarm();
@@ -193,7 +291,8 @@ export class ProductFactoryActor extends DurableObject<Env> {
       await this.ctx.storage.setAlarm(Date.now() + RETRY_MS);
       try {
         await this.project(state);
-        if (state.status !== "completed") await this.advance(state);
+        if (state.reversal) await this.reverse(state);
+        else if (state.status !== "completed") await this.advance(state);
       } catch (error) {
         // Pending journals must be replayed first; never overwrite an unprojected transition.
         if (!state.pending)
@@ -204,6 +303,7 @@ export class ProductFactoryActor extends DurableObject<Env> {
       }
       if (
         !state.pending &&
+        !state.reversal &&
         (state.status === "completed" || (state.approvalId && !state.decision))
       )
         await this.ctx.storage.deleteAlarm();
@@ -223,7 +323,7 @@ export class ProductFactoryActor extends DurableObject<Env> {
         throw new Error("Publishing requires governor approval");
       if (!this.env.ICVS_EXECUTOR)
         return this.block(state, "Publishing executor is not configured");
-      const operationId = `${state.id}:Publish`;
+      const operationId = `${state.id}:Publish${state.epoch ? `:${state.epoch}` : ""}`;
       const response = await this.env.ICVS_EXECUTOR.fetch(
         "https://executor.internal/execute",
         {
@@ -240,6 +340,7 @@ export class ProductFactoryActor extends DurableObject<Env> {
             build: state.build,
             qa: state.qa,
             decision: state.decision,
+            package: state.package,
           }),
           signal: AbortSignal.timeout(20_000),
         },
@@ -259,7 +360,7 @@ export class ProductFactoryActor extends DurableObject<Env> {
         );
       return this.transition(state, next.stage, "Publishing", evidence);
     }
-    if (current.engine !== "build" && current.engine !== "qa") {
+    if (!["build", "qa", "package"].includes(current.engine)) {
       if (!next) return;
       if (next.engine === "research") {
         const findings = (
@@ -302,7 +403,7 @@ export class ProductFactoryActor extends DurableObject<Env> {
       const resource = this.env.FACTORY_ACTOR!.get(
         this.env.FACTORY_ACTOR!.idFromName("icvs:resource-allocation"),
       );
-      const owner = `${state.id}:${state.stage}`;
+      const owner = `${state.id}:${state.stage}${state.epoch ? `:${state.epoch}` : ""}`;
       const allocation = await resource.fetch(
         "https://factory.internal/allocate",
         { method: "POST", body: JSON.stringify({ owner }) },
@@ -337,6 +438,7 @@ export class ProductFactoryActor extends DurableObject<Env> {
               specification: specificationEngine(state.brief),
               architecture: architectureEngine(state.brief),
               build: state.build,
+              qa: state.qa,
             }),
             signal: AbortSignal.timeout(20_000),
           },
@@ -351,14 +453,31 @@ export class ProductFactoryActor extends DurableObject<Env> {
           current.engine === "qa",
           state.build,
         );
+        if (
+          current.engine === "package" &&
+          (evidence.digest !== state.build?.digest ||
+            !evidence.checks.some(
+              (c) =>
+                c.requirement === "package" &&
+                c.passed &&
+                /^https:\/\/\S+$/.test(c.report),
+            ))
+        )
+          throw new Error(
+            "Package must attest packaging and match the verified build digest",
+          );
         finished = true;
         if (current.engine === "build") {
           state.build = evidence;
           if (!next || next.engine !== "qa")
             throw new Error("Build must be followed by QA");
           await this.transition(state, next.stage, "Build", evidence);
-        } else {
+        } else if (current.engine === "qa" && next?.engine === "package") {
           state.qa = evidence;
+          await this.transition(state, next.stage, "QA", evidence);
+        } else {
+          if (current.engine === "package") state.package = evidence;
+          else state.qa = evidence;
           state.approvalId = crypto.randomUUID();
           await this.transition(
             state,
@@ -366,7 +485,7 @@ export class ProductFactoryActor extends DurableObject<Env> {
             "Promotion",
             promotionEngine(state.build, state.qa),
             "automation",
-            "Build and QA verified; awaiting governor decision",
+            "Build, QA and configured packaging verified; awaiting governor decision",
           );
         }
       } finally {
@@ -400,6 +519,9 @@ export class ProductFactoryActor extends DurableObject<Env> {
     actor = "automation",
     reason = `${engine} completed`,
   ) {
+    const checkpoint = structuredClone(state);
+    delete checkpoint.pending;
+    delete checkpoint.reversal;
     const blocked =
       (evidence as { blocked?: boolean }).blocked ||
       (!!state.approvalId && !state.decision);
@@ -417,14 +539,100 @@ export class ProductFactoryActor extends DurableObject<Env> {
     state.stage = to;
     state.sequence++;
     state.status =
-      to === "Archived" || to === state.definition!.steps.at(-1)!.stage
-        ? "completed"
-        : blocked
-          ? "blocked"
+      blocked || state.reversal
+        ? "blocked"
+        : to === "Archived" || to === state.definition!.steps.at(-1)!.stage
+          ? "completed"
           : "running";
     state.message = reason;
-    await this.ctx.storage.put("workflow", state);
+    await this.ctx.storage.put({
+      workflow: state,
+      [`checkpoint:${state.pending.id}`]: checkpoint,
+    });
     await this.project(state);
+  }
+
+  private async reverse(state: Workflow) {
+    const reversal = state.reversal!;
+    const checkpoint = await this.ctx.storage.get<Workflow>(
+      `checkpoint:${reversal.eventId}`,
+    );
+    if (!checkpoint) throw new Error("Reversal checkpoint unavailable");
+    let compensation: ExecutionEvidence | null = null;
+    if (reversal.external) {
+      if (!this.env.ICVS_EXECUTOR)
+        throw new Error("Executor compensation unavailable");
+      const response = await this.env.ICVS_EXECUTOR.fetch(
+        "https://executor.internal/compensate",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": reversal.operationId,
+          },
+          body: JSON.stringify({
+            operationId: reversal.operationId,
+            eventId: reversal.eventId,
+            productId: state.productId,
+            runId: state.id,
+            fromStage: state.stage,
+            toStage: checkpoint.stage,
+            events: reversal.events,
+            build: state.build,
+            package: state.package,
+            reason: reversal.reason,
+          }),
+          signal: AbortSignal.timeout(20_000),
+        },
+      );
+      if (response.status === 202) return;
+      if (!response.ok)
+        throw new Error(`Compensation returned HTTP ${response.status}`);
+      compensation = validateEvidence(
+        await response.json(),
+        reversal.operationId,
+        false,
+      );
+      if (
+        compensation.digest !== state.build?.digest ||
+        !compensation.checks.some(
+          (c) =>
+            c.requirement === "compensation" &&
+            c.passed &&
+            /^https:\/\/\S+$/.test(c.report),
+        )
+      )
+        throw new Error(
+          "Compensation must attest completed effects for the current build",
+        );
+    }
+    const from = state.stage,
+      sequence = state.sequence,
+      epoch = (state.epoch ?? 0) + 1;
+    // Restore execution inputs; keep monotonic journal IDs and use fresh executor operation IDs.
+    for (const key of Object.keys(state))
+      delete (state as unknown as Record<string, unknown>)[key];
+    Object.assign(state, checkpoint, { stage: from, sequence, epoch });
+    delete state.allocatedFor;
+    if (
+      checkpoint.definition!.steps.find((s) => s.stage === checkpoint.stage)
+        ?.engine !== "ready"
+    ) {
+      delete state.approvalId;
+      delete state.decision;
+    }
+    await this.transition(
+      state,
+      checkpoint.stage,
+      "Reversal",
+      {
+        reverses: reversal.eventId,
+        compensation,
+        supersededApproval: reversal.approvalId ?? null,
+      },
+      reversal.actor,
+      reversal.reason,
+    );
   }
 
   private async project(state: Workflow) {
@@ -499,10 +707,7 @@ export class ProductFactoryActor extends DurableObject<Env> {
           `${state.brief.name}: ${event.from ?? "Intake"} → ${event.to}: ${event.reason}`,
         ),
     ];
-    if (
-      state.definition!.steps.find((s) => s.stage === event.to)?.engine ===
-      "publish"
-    ) {
+    if (event.engine === "Publishing") {
       statements.push(
         db
           .prepare(
@@ -510,6 +715,24 @@ export class ProductFactoryActor extends DurableObject<Env> {
           )
           .bind(event.id, state.productId),
       );
+    }
+    if (event.engine === "Reversal") {
+      const evidence = event.evidence as {
+        supersededApproval: string | null;
+        reverses: string;
+      };
+      if (evidence.supersededApproval)
+        statements.push(
+          db
+            .prepare(
+              "UPDATE approvals SET status='rejected',decision_note=?,decided_at=? WHERE id=? AND status='pending'",
+            )
+            .bind(
+              `Superseded by ${event.id}: ${event.reason}`,
+              event.at,
+              evidence.supersededApproval,
+            ),
+        );
     }
     if (state.approvalId) {
       statements.push(

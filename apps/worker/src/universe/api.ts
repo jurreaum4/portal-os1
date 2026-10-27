@@ -1,5 +1,5 @@
 import type { Env } from "../types";
-import { roleOf } from "./security";
+import { roleOf, identityOf } from "./security";
 import { universe } from "./graph";
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -251,7 +251,7 @@ export async function applyUniverseEvent(request: Request, env: Env) {
         previous?.data ?? null,
         JSON.stringify(d),
         b.source,
-        "automation",
+        request.headers.get("X-ICV-Actor") ?? "automation",
         b.reason,
         Number(b.deleted),
         at,
@@ -297,9 +297,18 @@ export async function universeApi(
       return json({ error: "Factory actor unavailable" }, 503);
     const size = Number(request.headers.get("Content-Length") ?? 0);
     if (size > 32768) return json({ error: "Event exceeds 32 KiB" }, 413);
+    const forwarded = new Request(
+      "https://factory.internal/universe/event",
+      request,
+    );
+    forwarded.headers.set(
+      "X-ICV-Actor",
+      (await identityOf(request, env))!.id.replace(/^service:/, ""),
+    );
+    forwarded.headers.delete("Authorization");
     return env.FACTORY_ACTOR.get(
       env.FACTORY_ACTOR.idFromName("icvs:universe-ingestion"),
-    ).fetch(new Request("https://factory.internal/universe/event", request));
+    ).fetch(forwarded);
   }
   if (request.method !== "GET")
     return json({ error: "Method not allowed" }, 405);
