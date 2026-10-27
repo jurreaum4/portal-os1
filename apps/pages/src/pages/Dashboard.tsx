@@ -115,13 +115,17 @@ export default function Dashboard() {
             </div>
           ))}
         </dl>
-        <ul className="platform-capabilities" aria-label="Platform capabilities">
+        <ul className="platform-capabilities" aria-label="Platform areas">
           {[
-            ["code", "MAX-CORE Runtime"],
-            ["dashboard", "Portal-OS1 Command Centre"],
-            ["departments", "ICVS Automation"],
-            ["spark", "Autonomous Product Factory"],
-            ["governance", "Executive Governance Layer"],
+            ["code", "Build Worker"],
+            ["check", "QA Worker"],
+            ["globe", "Publishing Worker"],
+            ["health", "Compensation Worker"],
+            ["dashboard", "Ecosystem Command Centre"],
+            ["departments", "Division Command Centres"],
+            ["analytics", "Portfolio Intelligence"],
+            ["products", "XR Data Layer"],
+            ["spark", "XR Experiences"],
           ].map(([icon, label]) => (
             <li key={label}>
               <Icon name={icon} size={15} />
