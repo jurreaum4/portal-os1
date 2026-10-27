@@ -1,0 +1,15 @@
+name = "max-marketplace"
+main = "apps/worker/src/marketplace-worker.ts"
+compatibility_date = "2026-04-01"
+[vars]
+MARKETPLACE_ORIGIN = "https://max.games"
+[[d1_databases]]
+binding = "DB"
+database_name = "portal-os1-production1-db"
+database_id = "519881b7-d15c-46b6-9ec8-513c54beb30b"
+migrations_dir = "apps/worker/d1/migrations"
+# Add CUSTOMER_IDENTITY, PAYMENTS and DOWNLOADS service bindings for trusted adapters.
+# No public endpoint accepts payment or execution success from a browser.
+
+[triggers]
+crons = ["*/5 * * * *"]

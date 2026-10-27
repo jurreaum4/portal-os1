@@ -1,5 +1,10 @@
 # ICVS automation layer
 
+This document describes the retained v1 workflow and Build/QA executor contract.
+New runs use the [version-2 package and publication extension](07_MAX_ECOSYSTEM.md).
+All operational reads now require staff access. Existing durable v1 runs retain
+their Ready completion semantics.
+
 ICVS coordinates products using the existing Worker, D1 binding, `ProductFactoryActor`, dashboard and governor API. MAX-CORE is unchanged. The Simulation engine imports its existing deterministic Simulation primitive; it does not implement a second runtime, scheduler or storage abstraction.
 
 ## Lifecycle and engines
@@ -26,7 +31,7 @@ Each transition first commits a deterministic event ID and resulting snapshot to
 
 Errors block visibly and retry every 30 seconds. Repeated identical blockers do not generate duplicate events. A governor gate stops alarms until a decision arrives. Completed runs stop alarms. Executor operations use stable run/stage idempotency keys and must tolerate ambiguous response delivery and retries.
 
-`GET /api/factory` shows status, stage and blocker messages. Existing products, pipeline, portfolio, analytics and department APIs reflect persisted lifecycle state. `GET /api/factory/:productId/outputs` includes engine outputs and score explanations. `GET /api/factory/:productId/transitions` adds the complete ordered per-run audit trail: sequence, source/target stages, engine, actor, reason, evidence and timestamp. The existing product page displays this history and refreshes every 15 seconds. Read APIs retain the repository's existing public-read policy.
+`GET /api/factory` shows status, stage and blocker messages. Existing products, pipeline, portfolio, analytics and department APIs reflect persisted lifecycle state. `GET /api/factory/:productId/outputs` includes engine outputs and score explanations. `GET /api/factory/:productId/transitions` adds the complete ordered per-run audit trail: sequence, source/target stages, engine, actor, reason, evidence and timestamp. The existing product page displays this history and refreshes every 15 seconds. Read APIs require staff authorisation.
 
 ## Real execution integration
 

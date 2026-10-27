@@ -6,7 +6,12 @@ import { ApprovalCard } from "../components/ApprovalCard";
 import { RefreshControl } from "../components/RefreshControl";
 import { useApi } from "../hooks/useApi";
 import { useGovernor } from "../layouts/GovernorLayout";
-export default function Approvals() {
+export default function Approvals({
+  embedded = false,
+}: {
+  embedded?: boolean;
+}) {
+  const Heading = embedded ? "h2" : "h1";
   const state = useApi(getApprovals);
   const { token } = useGovernor();
   const [params, setParams] = useSearchParams();
@@ -65,17 +70,18 @@ export default function Approvals() {
       <div className="page-heading">
         <div>
           <div className="eyebrow">ICVS GOVERNANCE</div>
-          <h1>
-            Approval centre<span className="title-dot">.</span>
-          </h1>
+          <Heading>
+            {embedded ? "Pending decisions" : "Approval centre"}
+            <span className="title-dot">.</span>
+          </Heading>
           <p>Inspect each request and decide what moves forward.</p>
         </div>
         <RefreshControl {...state} />
       </div>
       {!token && (
         <p className="notice">
-          You can review requests. Add your governor token in{" "}
-          <Link to="/settings">Settings</Link> to approve or reject them.
+          Your staff role can review requests. Governor permission is required
+          to record decisions.
         </p>
       )}
       {message && (
@@ -266,8 +272,9 @@ export default function Approvals() {
                     Override request
                   </button>
                   <p className="decision-note">
-                    Decisions are final for this request. Approval records your
-                    intent; it does not publish the product.
+                    Decisions are final for this request. Approved v2 packages
+                    are published automatically when verified publishing
+                    evidence is available.
                   </p>
                 </section>
               )}

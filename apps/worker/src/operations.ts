@@ -1,3 +1,9 @@
+import {
+  recommendations,
+  departmentMetrics,
+  configuredCapacity,
+} from "../../../portal-os/intelligence";
+import { staffIdentity } from "./access";
 import type { Env } from "./types";
 export const lifecycle = [
   "Idea",
@@ -18,26 +24,20 @@ export async function authorize(
   request: Request,
   env: Env,
 ): Promise<Response | null> {
-  if (!env.GOVERNOR_API_TOKEN)
+  if (!env.GOVERNOR_API_TOKEN && !env.STAFF_CREDENTIALS)
     return Response.json(
       { error: "Governor decisions are not configured" },
       { status: 503 },
     );
-  const digest = async (value: string) =>
-    new Uint8Array(
-      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)),
-    );
-  const [actual, expected] = await Promise.all([
-    digest(request.headers.get("Authorization") ?? ""),
-    digest(`Bearer ${env.GOVERNOR_API_TOKEN}`),
-  ]);
-  return actual.reduce((diff, byte, i) => diff | (byte ^ expected[i]), 0)
-    ? Response.json(
-        { error: "Governor authorization required" },
-        { status: 401 },
-      )
-    : null;
+  const identity = await staffIdentity(request, env);
+  return identity?.role === "Governor"
+    ? null
+    : Response.json(
+        { error: "Governor authorisation required" },
+        { status: identity ? 403 : 401 },
+      );
 }
+
 export interface OperationalProduct {
   id: string;
   name: string;
@@ -208,6 +208,33 @@ export async function operationalApi(
     return json({ id }, 201);
   }
   if (request.method !== "GET") return null;
+  if (path === "/api/revenue")
+    return json({
+      currencies: (
+        await db
+          .prepare(
+            "SELECT currency,COALESCE(SUM(CASE WHEN status='paid' THEN price_minor ELSE 0 END),0) AS paidMinor,COALESCE(SUM(CASE WHEN status='refunded' THEN price_minor ELSE 0 END),0) AS refundedMinor,SUM(status='paid') AS paidOrders FROM marketplace_orders GROUP BY currency ORDER BY currency",
+          )
+          .all()
+      ).results,
+      reportedMonthlyUsd:
+        (
+          await db
+            .prepare("SELECT COALESCE(SUM(revenue),0) AS total FROM products")
+            .first<{ total: number }>()
+        )?.total ?? 0,
+      sampledAt: new Date().toISOString(),
+    });
+  if (path === "/api/publishing")
+    return json(
+      (
+        await db
+          .prepare(
+            "SELECT p.id AS productId,p.name,p.stage,r.id AS runId,r.status,r.message,m.slug,m.published_at AS publishedAt FROM products p LEFT JOIN factory_runs r ON r.product_id=p.id LEFT JOIN marketplace_releases m ON m.id=r.id WHERE p.stage IN ('Package','Ready','Published','Live') ORDER BY p.updated_at DESC LIMIT 100",
+          )
+          .all()
+      ).results,
+    );
   if (path === "/api/divisions")
     return json(
       (
@@ -378,39 +405,40 @@ export async function operationalApi(
       }),
     });
   }
-  if (path === "/api/recommendations")
-    return json(
-      products.flatMap((p) => {
-        const reason =
-          p.status === "Attention"
-            ? "Resolve flagged product health before advancing."
-            : p.stage === "Ready"
-              ? "Review release readiness and the approval queue."
-              : p.score >= 85 &&
-                  !["Published", "Live", "Archived"].includes(p.stage)
-                ? "Prioritize this high scoring opportunity in the delivery queue."
-                : "";
-        return reason
-          ? [
-              {
-                id: p.id,
-                productId: p.id,
-                name: p.name,
-                priority: p.status === "Attention" ? "High" : "Medium",
-                reason,
-                score: p.score,
-              },
-            ]
-          : [];
-      }),
-    );
+  if (path === "/api/recommendations") return json(recommendations(products));
+  const runs = (
+    await db
+      .prepare(
+        "SELECT product_id AS productId,status FROM factory_runs WHERE status!='completed'",
+      )
+      .all<{ productId: string; status: string }>()
+  ).results;
+  const exits = (
+    await db
+      .prepare(
+        "SELECT from_stage AS stage,COUNT(*) AS count FROM workflow_events WHERE from_stage!=to_stage AND created_at>=? GROUP BY from_stage",
+      )
+      .bind(new Date(Date.now() - 7 * 86400000).toISOString())
+      .all<{ stage: string; count: number }>()
+  ).results;
   const pending = await db
     .prepare("SELECT COUNT(*) AS count FROM approvals WHERE status='pending'")
     .first<{ count: number }>();
+  const pendingIds = new Set(
+    (
+      await db
+        .prepare(
+          "SELECT product_id AS id FROM approvals WHERE status='pending'",
+        )
+        .all<{ id: string }>()
+    ).results.map((row) => row.id),
+  );
   return json(
     await Promise.all(
       departments.map(async (d) => {
-        const queue = products.filter((p) => d.stages.includes(p.stage));
+        const queue = products.filter((p) =>
+          d.id === "GOV" ? pendingIds.has(p.id) : d.stages.includes(p.stage),
+        );
         const outputs = (
           await db
             .prepare(
@@ -421,6 +449,15 @@ export async function operationalApi(
         ).results;
         return {
           ...d,
+          ...departmentMetrics(
+            queue,
+            runs,
+            configuredCapacity(env.DEPARTMENT_CAPACITY, d.id),
+            exits
+              .filter((e) => d.stages.includes(e.stage))
+              .reduce((sum, e) => sum + e.count, 0),
+          ),
+          sampledAt: new Date().toISOString(),
           status: queue.some((p) => p.status === "Attention")
             ? "Attention"
             : "Operational",

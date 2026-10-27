@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { api } from "../api/client";
+import { useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { getDepartments } from "../api/operations";
 import { useApi } from "../hooks/useApi";
@@ -8,6 +9,16 @@ import { Icon } from "../components/Icon";
 export default function Departments() {
   const state = useApi(getDepartments, 15000);
   const [active, setActive] = useState("GOV");
+  const loadHistory = useCallback(
+    (signal: AbortSignal) =>
+      api<{ day: string; queued: number; running: number; blocked: number }[]>(
+        `/api/departments/${encodeURIComponent(active)}/history`,
+        { signal },
+      ),
+    [active],
+  );
+  const history = useApi(loadHistory, 60000);
+
   const department = state.data?.find((d) => d.id === active);
   return (
     <>
@@ -59,6 +70,76 @@ export default function Departments() {
               </Link>
             )}
           </div>
+          <div className="portfolio-summary">
+            <div>
+              <strong>{department.capacity ?? "—"}</strong>
+              <span>
+                Capacity ·{" "}
+                {department.capacity === null
+                  ? "not configured"
+                  : department.capacityUnit}
+              </span>
+            </div>
+            <div>
+              <strong>{department.workload}</strong>
+              <span>Running operations</span>
+            </div>
+            <div>
+              <strong>{department.backlog}</strong>
+              <span>Backlog</span>
+            </div>
+            <div>
+              <strong>{department.completed7d}</strong>
+              <span>Stage exits · last 7 days</span>
+            </div>
+          </div>
+          <h3>Historical trends · daily UTC</h3>
+          <AsyncState {...history} retry={history.reload} />
+          {history.data?.length ? (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Day</th>
+                    <th>Queue</th>
+                    <th>Running</th>
+                    <th>Blocked</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.data.map((h) => (
+                    <tr key={h.day}>
+                      <td>{h.day}</td>
+                      <td>{h.queued}</td>
+                      <td>{h.running}</td>
+                      <td>{h.blocked}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="muted">
+              Daily observations accumulate automatically.
+            </p>
+          )}
+          <h3>Forecast</h3>
+          <p>
+            {department.forecasts.daysToClear === null
+              ? "Insufficient completion history for a forecast."
+              : `Estimated queue clearance: ${department.forecasts.daysToClear} days.`}
+          </p>
+          <p className="muted">{department.forecasts.method}</p>
+          <h3>Recommendations</h3>
+          {department.recommendations.length ? (
+            <ul>
+              {department.recommendations.map((r) => (
+                <li key={r}>{r}</li>
+              ))}
+            </ul>
+          ) : (
+            <p>No current recommendations.</p>
+          )}
           <div className="analytics-grid">
             <div>
               <h3>Department queue</h3>

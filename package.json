@@ -5,7 +5,8 @@
   "workspaces": [
     "apps/pages",
     "apps/worker",
-    "max-core"
+    "max-core",
+    "apps/marketplace"
   ],
   "engines": {
     "node": ">=22.12.0"
@@ -13,13 +14,15 @@
   "scripts": {
     "dev:pages": "npm run dev -w @portal/pages",
     "dev:worker": "wrangler dev --port 8787",
-    "build": "npm run build -w @portal/pages",
+    "build": "npm run build -w @portal/pages && npm run build -w @max/marketplace",
     "typecheck": "npm run typecheck --workspaces",
     "test": "vitest run && npm run test -w max-core",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:seed:local": "wrangler d1 execute DB --local --file apps/worker/d1/seed.sql",
     "deploy:worker": "wrangler deploy",
-    "deploy:pages": "npm run build && wrangler pages deploy apps/pages/dist --project-name portal-os1"
+    "deploy:pages": "npm run build && wrangler pages deploy apps/pages/dist --project-name portal-os1",
+    "dev:marketplace": "npm run dev -w @max/marketplace",
+    "dev:marketplace-api": "wrangler dev --config wrangler.marketplace.toml --port 8788 --var MARKETPLACE_ORIGIN:http://localhost:5174 --inspector-port 9231"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.4.7",

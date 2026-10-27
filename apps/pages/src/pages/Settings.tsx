@@ -5,7 +5,7 @@ import { AsyncState } from "../components/AsyncState";
 import { API_URL } from "../api/client";
 import { useGovernor } from "../layouts/GovernorLayout";
 export default function Settings() {
-  const { token, setToken } = useGovernor();
+  const { token, setToken, role } = useGovernor();
   const [draft, setDraft] = useState(token);
   const divisions = useApi(getDivisions);
   const [divisionName, setDivisionName] = useState("");
@@ -74,7 +74,7 @@ export default function Settings() {
           <span className="access-state">
             {token
               ? "Governor token is set for this tab."
-              : "Read access only."}
+              : `Signed in as ${role}.`}
           </span>
         </form>
       </section>
@@ -91,47 +91,49 @@ export default function Settings() {
             <span className="badge">Active division</span>
           </div>
         ))}
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            setCreating(true);
-            setDivisionError("");
-            try {
-              await mutate("/api/divisions", token, { name: divisionName });
-              setDivisionName("");
-              divisions.reload();
-            } catch (c) {
-              setDivisionError(
-                c instanceof Error ? c.message : "Could not create division",
-              );
-            } finally {
-              setCreating(false);
-            }
-          }}
-        >
-          <label htmlFor="division-name">New division name</label>
-          <input
-            id="division-name"
-            value={divisionName}
-            minLength={2}
-            maxLength={80}
-            required
-            onChange={(e) => setDivisionName(e.target.value)}
-          />
-          <button className="primary" disabled={!token || creating}>
-            {creating ? "Adding…" : "Add division"}
-          </button>
-          {!token && (
-            <p className="muted">
-              Governor access is required to add divisions.
-            </p>
-          )}
-          {divisionError && (
-            <p role="alert" className="notice error">
-              {divisionError}
-            </p>
-          )}
-        </form>
+        {role === "Governor" && (
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setCreating(true);
+              setDivisionError("");
+              try {
+                await mutate("/api/divisions", token, { name: divisionName });
+                setDivisionName("");
+                divisions.reload();
+              } catch (c) {
+                setDivisionError(
+                  c instanceof Error ? c.message : "Could not create division",
+                );
+              } finally {
+                setCreating(false);
+              }
+            }}
+          >
+            <label htmlFor="division-name">New division name</label>
+            <input
+              id="division-name"
+              value={divisionName}
+              minLength={2}
+              maxLength={80}
+              required
+              onChange={(e) => setDivisionName(e.target.value)}
+            />
+            <button className="primary" disabled={!token || creating}>
+              {creating ? "Adding…" : "Add division"}
+            </button>
+            {!token && (
+              <p className="muted">
+                Governor access is required to add divisions.
+              </p>
+            )}
+            {divisionError && (
+              <p role="alert" className="notice error">
+                {divisionError}
+              </p>
+            )}
+          </form>
+        )}
       </section>
     </>
   );
