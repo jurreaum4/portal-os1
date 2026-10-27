@@ -92,6 +92,44 @@ export default function Dashboard() {
           </Link>
         </div>
       </div>
+      <section className="platform-overview" aria-labelledby="platform-title">
+        <div className="platform-heading">
+          <span className="platform-symbol">
+            <Icon name="globe" size={22} />
+          </span>
+          <div>
+            <div className="eyebrow">PLATFORM OVERVIEW</div>
+            <h2 id="platform-title">Portal-OS1 Command Centre</h2>
+          </div>
+        </div>
+        <dl className="platform-scope">
+          {[
+            ["8", "Layers"],
+            ["20+", "Core Screens"],
+            ["50+", "Operational Views"],
+            ["5", "XR Environments"],
+          ].map(([value, label]) => (
+            <div key={label}>
+              <dt>{label}</dt>
+              <dd>{value}</dd>
+            </div>
+          ))}
+        </dl>
+        <ul className="platform-capabilities" aria-label="Platform capabilities">
+          {[
+            ["code", "MAX-CORE Runtime"],
+            ["dashboard", "Portal-OS1 Command Centre"],
+            ["departments", "ICVS Automation"],
+            ["spark", "Autonomous Product Factory"],
+            ["governance", "Executive Governance Layer"],
+          ].map(([icon, label]) => (
+            <li key={label}>
+              <Icon name={icon} size={15} />
+              {label}
+            </li>
+          ))}
+        </ul>
+      </section>
       <div className="dashboard-toolbar">
         <div className="overview-tabs">
           <span className="selected">Overview</span>
