@@ -1,3 +1,5 @@
+import { applyUniverseEvent } from "./universe/api";
+import { loadDefinition, type WorkflowDefinition } from "./icvs/definition";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./types";
 import {
@@ -26,6 +28,7 @@ interface Event {
   at: string;
 }
 interface Workflow {
+  definition?: WorkflowDefinition;
   id: string;
   productId: string;
   brief: Brief;
@@ -48,6 +51,8 @@ export class ProductFactoryActor extends DurableObject<Env> {
     if (request.method !== "POST")
       return Response.json({ error: "Method not allowed" }, { status: 405 });
     return this.ctx.blockConcurrencyWhile(async () => {
+      if (new URL(request.url).pathname === "/universe/event")
+        return applyUniverseEvent(request, this.env);
       const body = (await request.json()) as {
         productId: string;
         approvalId?: string;
@@ -64,7 +69,10 @@ export class ProductFactoryActor extends DurableObject<Env> {
           { error: "Actor product mismatch" },
           { status: 409 },
         );
-      if (state) await this.project(state);
+      if (state) {
+        state.definition ??= await loadDefinition(this.env.DB, true);
+        await this.project(state);
+      }
       if (path === "/decision") {
         if (
           !state ||
@@ -84,7 +92,9 @@ export class ProductFactoryActor extends DurableObject<Env> {
         await this.ctx.storage.setAlarm(Date.now() + RETRY_MS);
         await this.transition(
           state,
-          body.status === "rejected" ? "Archived" : "Ready",
+          body.status === "rejected"
+            ? "Archived"
+            : state.definition!.steps.find((s) => s.engine === "ready")!.stage,
           body.status === "rejected" ? "Archive" : "Promotion",
           body.status === "rejected"
             ? archiveEngine(
@@ -94,7 +104,8 @@ export class ProductFactoryActor extends DurableObject<Env> {
           "governor",
           state.decision.note || body.status!,
         );
-        await this.ctx.storage.deleteAlarm();
+        if (state.status === "completed") await this.ctx.storage.deleteAlarm();
+        else await this.ctx.storage.setAlarm(Date.now() + 1);
         return Response.json({ success: true, status: body.status });
       }
       if (state) {
@@ -120,8 +131,14 @@ export class ProductFactoryActor extends DurableObject<Env> {
       )
         .bind(body.productId)
         .first<{ id: string }>();
+      const definition = await loadDefinition(this.env.DB);
       if (
-        !["Idea", "Discovery", "Validation"].includes(product.stage) &&
+        ![
+          definition.steps[0].stage,
+          "Idea",
+          "Discovery",
+          "Validation",
+        ].includes(product.stage) &&
         !(product.stage === "Build" && existing)
       )
         return Response.json(
@@ -140,10 +157,11 @@ export class ProductFactoryActor extends DurableObject<Env> {
         );
       }
       state = {
+        definition,
         id: existing?.id ?? crypto.randomUUID(),
         productId: body.productId,
         brief: { name: product.name, description: product.description },
-        stage: product.stage === "Build" ? "Build" : "Idea",
+        stage: product.stage === "Build" ? "Build" : definition.steps[0].stage,
         sequence: 0,
         status: "running",
         message: "Idea accepted; automation scheduled",
@@ -170,6 +188,7 @@ export class ProductFactoryActor extends DurableObject<Env> {
     await this.ctx.blockConcurrencyWhile(async () => {
       const state = await this.ctx.storage.get<Workflow>("workflow");
       if (!state) return;
+      state.definition ??= await loadDefinition(this.env.DB, true);
       // Keep retrying beyond Cloudflare's bounded automatic alarm retries.
       await this.ctx.storage.setAlarm(Date.now() + RETRY_MS);
       try {
@@ -183,7 +202,10 @@ export class ProductFactoryActor extends DurableObject<Env> {
             error instanceof Error ? error.message : "Execution unavailable",
           );
       }
-      if (!state.pending && (state.status === "completed" || state.approvalId))
+      if (
+        !state.pending &&
+        (state.status === "completed" || (state.approvalId && !state.decision))
+      )
         await this.ctx.storage.deleteAlarm();
       else if (!state.pending && state.status === "running")
         await this.ctx.storage.setAlarm(Date.now() + 1);
@@ -191,124 +213,170 @@ export class ProductFactoryActor extends DurableObject<Env> {
   }
 
   private async advance(state: Workflow) {
-    switch (state.stage) {
-      case "Idea":
-        return this.transition(
-          state,
-          "Discovery",
-          "Workflow",
-          { source: state.brief.description },
-          "automation",
-          "Discovery grounded in submitted brief",
-        );
-      case "Discovery":
-        return this.transition(
-          state,
-          "Specification",
-          "Specification",
-          specificationEngine(state.brief),
-        );
-      case "Specification":
-        return this.transition(
-          state,
-          "Architecture",
-          "Architecture",
-          architectureEngine(state.brief),
-        );
-      case "Architecture": {
-        const result = simulationEngine(state.brief);
-        if (!result.passed) throw new Error("Lifecycle simulation failed");
-        return this.transition(state, "Simulation", "Simulation", result);
-      }
-      case "Simulation":
-        return this.transition(state, "Build", "Workflow", {
-          handoff: "Execute implementation from specification",
-        });
-      case "Build":
-      case "QA": {
-        if (state.approvalId) return;
-        if (!this.env.ICVS_EXECUTOR)
-          return this.block(
-            state,
-            "Build and QA executor binding is not configured",
-          );
-        const resource = this.env.FACTORY_ACTOR!.get(
-          this.env.FACTORY_ACTOR!.idFromName("icvs:resource-allocation"),
-        );
-        const owner = `${state.id}:${state.stage}`;
-        const allocation = await resource.fetch(
-          "https://factory.internal/allocate",
-          { method: "POST", body: JSON.stringify({ owner }) },
-        );
-        if (!allocation.ok)
-          return this.block(state, "Waiting for execution capacity");
-        const lease = (await allocation.json()) as { expiresAt: number };
-        if (state.allocatedFor !== owner) {
-          state.allocatedFor = owner;
-          await this.transition(state, state.stage, "Resource Allocation", {
-            owner,
-            expiresAt: lease.expiresAt,
-          });
-        }
-        let finished = false;
-        try {
-          const operationId = owner;
-          const response = await this.env.ICVS_EXECUTOR.fetch(
-            "https://executor.internal/execute",
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Idempotency-Key": operationId,
-              },
-              body: JSON.stringify({
-                operationId,
-                leaseExpiresAt: lease.expiresAt,
-                productId: state.productId,
-                runId: state.id,
-                stage: state.stage,
-                specification: specificationEngine(state.brief),
-                architecture: architectureEngine(state.brief),
-                build: state.build,
-              }),
-              signal: AbortSignal.timeout(20_000),
-            },
-          );
-          if (response.status === 202)
-            return this.block(state, "Executor is processing the operation");
-          if (!response.ok)
-            throw new Error(`Executor returned HTTP ${response.status}`);
-          const evidence = validateEvidence(
-            await response.json(),
+    const steps = state.definition!.steps;
+    const index = steps.findIndex((s) => s.stage === state.stage);
+    if (index < 0) throw new Error("Stage not present in pinned workflow");
+    const current = steps[index];
+    const next = steps[index + 1];
+    if (current.engine === "ready" && next?.engine === "publish") {
+      if (!state.decision || state.decision.status === "rejected")
+        throw new Error("Publishing requires governor approval");
+      if (!this.env.ICVS_EXECUTOR)
+        return this.block(state, "Publishing executor is not configured");
+      const operationId = `${state.id}:Publish`;
+      const response = await this.env.ICVS_EXECUTOR.fetch(
+        "https://executor.internal/execute",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": operationId,
+          },
+          body: JSON.stringify({
             operationId,
-            state.stage === "QA",
-            state.build,
-          );
-          finished = true;
-          if (state.stage === "Build") {
-            state.build = evidence;
-            await this.transition(state, "QA", "Build", evidence);
-          } else {
-            state.qa = evidence;
-            state.approvalId = crypto.randomUUID();
-            await this.transition(
-              state,
-              "QA",
-              "Promotion",
-              promotionEngine(state.build, state.qa),
-              "automation",
-              "Build and QA verified; awaiting governor decision",
-            );
-          }
-        } finally {
-          if (finished)
-            await resource.fetch("https://factory.internal/release", {
-              method: "POST",
-              body: JSON.stringify({ owner }),
-            });
-        }
-        return;
+            productId: state.productId,
+            runId: state.id,
+            stage: next.stage,
+            build: state.build,
+            qa: state.qa,
+            decision: state.decision,
+          }),
+          signal: AbortSignal.timeout(20_000),
+        },
+      );
+      if (response.status === 202)
+        return this.block(state, "Publishing is in progress");
+      if (!response.ok)
+        throw new Error(`Publishing returned HTTP ${response.status}`);
+      const evidence = validateEvidence(
+        await response.json(),
+        operationId,
+        false,
+      );
+      if (evidence.digest !== state.build?.digest)
+        throw new Error(
+          "Published artifact digest differs from approved build",
+        );
+      return this.transition(state, next.stage, "Publishing", evidence);
+    }
+    if (current.engine !== "build" && current.engine !== "qa") {
+      if (!next) return;
+      if (next.engine === "research") {
+        const findings = (
+          await this.env.DB.prepare(
+            "SELECT id,data,source,updated_at FROM universe_records WHERE deleted=0 AND kind='observation' AND json_extract(data,'$.entityId')=? ORDER BY updated_at",
+          )
+            .bind(`product:${state.productId}`)
+            .all()
+        ).results;
+        return this.transition(state, next.stage, "Research", {
+          question: state.brief.description,
+          findings,
+          coverage: findings.length
+            ? "Connected source observations"
+            : "No external observations connected; brief-only context",
+        });
       }
+      const engines: Record<string, () => unknown> = {
+        discovery: () => ({ source: state.brief.description }),
+        specification: () => specificationEngine(state.brief),
+        architecture: () => architectureEngine(state.brief),
+        simulation: () =>
+          simulationEngine(
+            state.brief,
+            steps.map((s) => s.stage),
+          ),
+        build: () => ({ handoff: "Execute implementation from specification" }),
+      };
+      const engine = engines[next.engine];
+      if (!engine) throw new Error("Unsupported automatic engine transition");
+      return this.transition(state, next.stage, next.engine, engine());
+    }
+    {
+      if (state.approvalId) return;
+      if (!this.env.ICVS_EXECUTOR)
+        return this.block(
+          state,
+          "Build and QA executor binding is not configured",
+        );
+      const resource = this.env.FACTORY_ACTOR!.get(
+        this.env.FACTORY_ACTOR!.idFromName("icvs:resource-allocation"),
+      );
+      const owner = `${state.id}:${state.stage}`;
+      const allocation = await resource.fetch(
+        "https://factory.internal/allocate",
+        { method: "POST", body: JSON.stringify({ owner }) },
+      );
+      if (!allocation.ok)
+        return this.block(state, "Waiting for execution capacity");
+      const lease = (await allocation.json()) as { expiresAt: number };
+      if (state.allocatedFor !== owner) {
+        state.allocatedFor = owner;
+        await this.transition(state, state.stage, "Resource Allocation", {
+          owner,
+          expiresAt: lease.expiresAt,
+        });
+      }
+      let finished = false;
+      try {
+        const operationId = owner;
+        const response = await this.env.ICVS_EXECUTOR.fetch(
+          "https://executor.internal/execute",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Idempotency-Key": operationId,
+            },
+            body: JSON.stringify({
+              operationId,
+              leaseExpiresAt: lease.expiresAt,
+              productId: state.productId,
+              runId: state.id,
+              stage: state.stage,
+              specification: specificationEngine(state.brief),
+              architecture: architectureEngine(state.brief),
+              build: state.build,
+            }),
+            signal: AbortSignal.timeout(20_000),
+          },
+        );
+        if (response.status === 202)
+          return this.block(state, "Executor is processing the operation");
+        if (!response.ok)
+          throw new Error(`Executor returned HTTP ${response.status}`);
+        const evidence = validateEvidence(
+          await response.json(),
+          operationId,
+          current.engine === "qa",
+          state.build,
+        );
+        finished = true;
+        if (current.engine === "build") {
+          state.build = evidence;
+          if (!next || next.engine !== "qa")
+            throw new Error("Build must be followed by QA");
+          await this.transition(state, next.stage, "Build", evidence);
+        } else {
+          state.qa = evidence;
+          state.approvalId = crypto.randomUUID();
+          await this.transition(
+            state,
+            state.stage,
+            "Promotion",
+            promotionEngine(state.build, state.qa),
+            "automation",
+            "Build and QA verified; awaiting governor decision",
+          );
+        }
+      } finally {
+        if (finished)
+          await resource.fetch("https://factory.internal/release", {
+            method: "POST",
+            body: JSON.stringify({ owner }),
+          });
+      }
+      return;
     }
   }
 
@@ -348,11 +416,12 @@ export class ProductFactoryActor extends DurableObject<Env> {
     };
     state.stage = to;
     state.sequence++;
-    state.status = ["Ready", "Archived"].includes(to)
-      ? "completed"
-      : blocked
-        ? "blocked"
-        : "running";
+    state.status =
+      to === "Archived" || to === state.definition!.steps.at(-1)!.stage
+        ? "completed"
+        : blocked
+          ? "blocked"
+          : "running";
     state.message = reason;
     await this.ctx.storage.put("workflow", state);
     await this.project(state);
@@ -362,7 +431,10 @@ export class ProductFactoryActor extends DurableObject<Env> {
     const event = state.pending;
     if (!event) return;
     const db = this.env.DB;
-    const score = scoringEngine(state.stage);
+    const score = scoringEngine(
+      state.stage,
+      state.definition!.steps.map((s) => s.stage),
+    );
     const statements = [
       db
         .prepare(
@@ -427,6 +499,18 @@ export class ProductFactoryActor extends DurableObject<Env> {
           `${state.brief.name}: ${event.from ?? "Intake"} → ${event.to}: ${event.reason}`,
         ),
     ];
+    if (
+      state.definition!.steps.find((s) => s.stage === event.to)?.engine ===
+      "publish"
+    ) {
+      statements.push(
+        db
+          .prepare(
+            "INSERT OR IGNORE INTO deployments(id,product_id,environment,status) VALUES (?,?,'production','succeeded')",
+          )
+          .bind(event.id, state.productId),
+      );
+    }
     if (state.approvalId) {
       statements.push(
         db

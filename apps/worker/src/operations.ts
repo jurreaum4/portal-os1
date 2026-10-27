@@ -1,17 +1,11 @@
+import { loadDefinition } from "./icvs/definition";
+import { roleOf } from "./universe/security";
 import type { Env } from "./types";
-export const lifecycle = [
-  "Idea",
-  "Discovery",
-  "Specification",
-  "Architecture",
-  "Simulation",
-  "Build",
-  "QA",
-  "Test",
-  "Package",
-  "Ready",
-  "Published",
-];
+export const revenueScenarios = (revenue: number) => ({
+  conservative: revenue * 0.95,
+  baseline: revenue,
+  optimistic: revenue * 1.1,
+});
 export const productColumns =
   "id, name, description, stage, score, updated_at AS updatedAt, division_id AS divisionId, revenue, status";
 export async function authorize(
@@ -48,56 +42,6 @@ export interface OperationalProduct {
   revenue: number;
   status: string;
 }
-export const departments = [
-  {
-    id: "GOV",
-    name: "Governance",
-    description: "Decisions, policy & accountability",
-    stages: ["Ready"],
-  },
-  {
-    id: "STRAT",
-    name: "Strategy",
-    description: "Opportunities & product discovery",
-    stages: ["Idea", "Discovery", "Validation"],
-  },
-  {
-    id: "ARCH",
-    name: "Architecture",
-    description: "Specifications & system design",
-    stages: ["Specification", "Architecture", "Simulation"],
-  },
-  {
-    id: "BUILD",
-    name: "Build",
-    description: "Engineering & product delivery",
-    stages: ["Build"],
-  },
-  {
-    id: "TEST",
-    name: "Quality assurance",
-    description: "Validation & release confidence",
-    stages: ["QA", "Test"],
-  },
-  {
-    id: "OPS",
-    name: "Operations",
-    description: "Packaging, releases & runtime",
-    stages: ["Package"],
-  },
-  {
-    id: "DATA",
-    name: "Intelligence",
-    description: "Portfolio signals & scoring",
-    stages: [],
-  },
-  {
-    id: "GROWTH",
-    name: "Growth",
-    description: "Published products & revenue",
-    stages: ["Published", "Live"],
-  },
-];
 export async function operationalApi(
   request: Request,
   env: Env,
@@ -113,7 +57,10 @@ export async function operationalApi(
   if (mutation) {
     if (request.method !== "POST")
       return json({ error: "Method not allowed" }, 405);
-    const denied = await authorize(request, env);
+    const denied =
+      (await roleOf(request, env)) === "automation"
+        ? null
+        : await authorize(request, env);
     if (denied) return denied;
     if (path.startsWith("/api/factory/")) {
       if (!env.FACTORY_ACTOR)
@@ -182,13 +129,20 @@ export async function operationalApi(
       return json({ error: "Choose an existing division" }, 400);
     if (!env.FACTORY_ACTOR)
       return json({ error: "Factory actor is unavailable" }, 503);
+    const definition = await loadDefinition(db);
     const id = crypto.randomUUID();
     await db.batch([
       db
         .prepare(
-          "INSERT INTO products (id,name,description,division_id,stage) VALUES (?,?,?,?,'Idea')",
+          "INSERT INTO products (id,name,description,division_id,stage) VALUES (?,?,?,?,?)",
         )
-        .bind(id, name, description, body.divisionId),
+        .bind(
+          id,
+          name,
+          description,
+          body.divisionId,
+          definition.steps[0].stage,
+        ),
       db
         .prepare(
           "INSERT INTO activity (id,product_id,title,department) VALUES (?,?,?,'STRAT')",
@@ -357,23 +311,42 @@ export async function operationalApi(
   if (path === "/api/forecasts") {
     const divisions = (
       await db
-        .prepare("SELECT id,name FROM divisions ORDER BY rowid")
+        .prepare(
+          "SELECT id,name,parent_id AS parentId FROM divisions WHERE parent_id IS NULL ORDER BY rowid",
+        )
         .all<{ id: string; name: string }>()
+    ).results;
+    const hierarchy = (
+      await db
+        .prepare("SELECT id,parent_id AS parentId FROM divisions")
+        .all<{ id: string; parentId: string | null }>()
     ).results;
     return json({
       method:
         "Scenario estimate: current monthly revenue × selected growth assumption. No historical trend is available.",
       divisions: divisions.map((d) => {
-        const rows = products.filter((p) => p.divisionId === d.id);
+        const ids = new Set([d.id]);
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const child of hierarchy)
+            if (
+              child.parentId &&
+              ids.has(child.parentId) &&
+              !ids.has(child.id)
+            ) {
+              ids.add(child.id);
+              changed = true;
+            }
+        }
+        const rows = products.filter((p) => ids.has(p.divisionId));
         const revenue = rows.reduce((sum, p) => sum + p.revenue, 0);
         return {
           ...d,
           revenue,
           products: rows.length,
           ready: rows.filter((p) => p.stage === "Ready").length,
-          conservative: revenue * 0.95,
-          baseline: revenue,
-          optimistic: revenue * 1.1,
+          ...revenueScenarios(revenue),
         };
       }),
     });
@@ -407,6 +380,13 @@ export async function operationalApi(
   const pending = await db
     .prepare("SELECT COUNT(*) AS count FROM approvals WHERE status='pending'")
     .first<{ count: number }>();
+  const departments = (
+    await db
+      .prepare(
+        "SELECT id,name,description,stages FROM department_config ORDER BY rowid",
+      )
+      .all<{ id: string; name: string; description: string; stages: string }>()
+  ).results.map((d) => ({ ...d, stages: JSON.parse(d.stages) as string[] }));
   return json(
     await Promise.all(
       departments.map(async (d) => {

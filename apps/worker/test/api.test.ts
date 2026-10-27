@@ -39,7 +39,26 @@ beforeAll(async () => {
       "INSERT INTO deployments(id,product_id,environment,status) VALUES ('old-deployment','legacy','test','succeeded')",
     ),
   ]);
-  await applyD1Migrations(bindings.DB, bindings.TEST_MIGRATIONS.slice(4));
+  await applyD1Migrations(bindings.DB, bindings.TEST_MIGRATIONS.slice(4, 5));
+  await bindings.DB.batch([
+    bindings.DB.prepare(
+      "INSERT INTO workflow_events(id,run_id,product_id,sequence,to_stage,engine,actor,reason,evidence,created_at) VALUES ('old-event','old-run','legacy',1,'Build','Build','automation','Preserve history','{}','2025-01-01T00:00:00Z')",
+    ),
+    bindings.DB.prepare(
+      "INSERT INTO workflow_approvals(approval_id,run_id) VALUES ('legacy-decision','old-run')",
+    ),
+  ]);
+  await applyD1Migrations(bindings.DB, bindings.TEST_MIGRATIONS.slice(5));
+  expect(
+    await bindings.DB.prepare(
+      "SELECT id FROM workflow_events WHERE id='old-event'",
+    ).first("id"),
+  ).toBe("old-event");
+  expect(
+    await bindings.DB.prepare(
+      "SELECT run_id FROM workflow_approvals WHERE approval_id='legacy-decision'",
+    ).first("run_id"),
+  ).toBe("old-run");
   for (const table of [
     "factory_runs",
     "factory_outputs",
@@ -67,6 +86,12 @@ beforeAll(async () => {
   ).toEqual([]);
 });
 beforeEach(async () => {
+  await bindings.DB.batch([
+    bindings.DB.prepare("UPDATE workflow_definitions SET active=0"),
+    bindings.DB.prepare(
+      "UPDATE workflow_definitions SET active=1 WHERE id='icvs-v2'",
+    ),
+  ]);
   await bindings.DB.batch([
     bindings.DB.prepare("DELETE FROM workflow_approvals"),
     bindings.DB.prepare("DELETE FROM workflow_events"),
@@ -120,7 +145,7 @@ describe("Worker API and D1 integration", () => {
       stage: string;
       products: unknown[];
     }[];
-    expect(pipeline).toHaveLength(14);
+    expect(pipeline).toHaveLength(15);
     expect(
       pipeline.find((row) => row.stage === "Ready")?.products,
     ).toHaveLength(1);
@@ -256,7 +281,7 @@ describe("Worker API and D1 integration", () => {
 
 describe("Command centre operations", () => {
   it("serves divisions, runtime and intelligence from D1", async () => {
-    expect(await (await get("/api/divisions")).json()).toHaveLength(4);
+    expect(await (await get("/api/divisions")).json()).toHaveLength(15);
     expect(await (await get("/api/system-health")).json()).toMatchObject({
       status: "Operational",
       services: [

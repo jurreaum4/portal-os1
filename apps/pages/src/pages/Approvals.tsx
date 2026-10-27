@@ -266,8 +266,9 @@ export default function Approvals() {
                     Override request
                   </button>
                   <p className="decision-note">
-                    Decisions are final for this request. Approval records your
-                    intent; it does not publish the product.
+                    Decisions are final for this request. V3 workflow approval
+                    authorizes automatic publishing of the verified artifact.
+                    Existing V2 requests retain their original behavior.
                   </p>
                 </section>
               )}

@@ -1,3 +1,4 @@
+import { getPipeline } from "../api/pipeline";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { getProducts } from "../api/products";
@@ -12,9 +13,10 @@ import {
 import { useApi } from "../hooks/useApi";
 import { AsyncState } from "../components/AsyncState";
 import { Icon } from "../components/Icon";
-import { money, STAGES } from "../types";
+import { money } from "../types";
 const divisionIcons = ["products", "analytics", "spark", "portfolio"];
 export default function Dashboard() {
+  const pipeline = useApi(getPipeline, 15000);
   const deployments = useApi(getDeployments, 15000);
   const products = useApi(getProducts, 15000),
     approvals = useApi(getApprovals, 15000),
@@ -313,29 +315,31 @@ export default function Dashboard() {
               </span>
             </div>
             <div className="lifecycle-bars">
-              {STAGES.slice(0, 10).map((s, i) => {
-                const n = rows.filter(
-                  (p) =>
-                    p.stage === s ||
-                    (s === "Published" && p.stage === "Live") ||
-                    (s === "Discovery" && p.stage === "Validation"),
-                ).length;
-                return (
-                  <Link to="/pipeline" key={s}>
-                    <span className="lifecycle-count">{n}</span>
-                    <div
-                      className={`lifecycle-bar ${n ? "has-products" : ""}`}
-                      style={
-                        {
-                          height: `${18 + n * 22}px`,
-                          "--bar-color": `hsl(${253 - i * 10} 55% ${61 - i}%)`,
-                        } as React.CSSProperties
-                      }
-                    />
-                    <span className="lifecycle-name">{s}</span>
-                  </Link>
-                );
-              })}
+              {(pipeline.data ?? [])
+                .map((p) => p.stage)
+                .map((s, i) => {
+                  const n = rows.filter(
+                    (p) =>
+                      p.stage === s ||
+                      (s === "Published" && p.stage === "Live") ||
+                      (s === "Discovery" && p.stage === "Validation"),
+                  ).length;
+                  return (
+                    <Link to="/pipeline" key={s}>
+                      <span className="lifecycle-count">{n}</span>
+                      <div
+                        className={`lifecycle-bar ${n ? "has-products" : ""}`}
+                        style={
+                          {
+                            height: `${18 + n * 22}px`,
+                            "--bar-color": `hsl(${253 - i * 10} 55% ${61 - i}%)`,
+                          } as React.CSSProperties
+                        }
+                      />
+                      <span className="lifecycle-name">{s}</span>
+                    </Link>
+                  );
+                })}
             </div>
             <div className="pipeline-note">
               <Icon name="spark" size={14} />

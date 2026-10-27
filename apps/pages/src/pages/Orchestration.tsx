@@ -1,3 +1,4 @@
+import { getPipeline } from "../api/pipeline";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { getFactory, getDivisions, mutate } from "../api/operations";
@@ -17,6 +18,7 @@ const engines = [
   ["Project Scoring", "DATA", "Score lifecycle evidence completeness"],
 ];
 export default function Orchestration() {
+  const pipeline = useApi(getPipeline);
   const runs = useApi(getFactory, 15000),
     divisions = useApi(getDivisions);
   const { token } = useGovernor();
@@ -142,8 +144,7 @@ export default function Orchestration() {
         <section className="panel">
           <h2>Automatic lifecycle</h2>
           <p className="muted">
-            Idea → Discovery → Specification → Architecture → Simulation → Build
-            → QA → Ready
+            {(pipeline.data ?? []).map((p) => p.stage).join(" → ")}
           </p>
           <p>
             New ideas start automatically. The governor approves, rejects or

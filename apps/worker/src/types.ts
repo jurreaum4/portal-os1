@@ -1,4 +1,6 @@
 export interface Env {
+  UNIVERSE_VIEWER_TOKEN?: string;
+  UNIVERSE_AUTOMATION_TOKEN?: string;
   ICVS_EXECUTOR?: Fetcher;
   ICVS_EXECUTION_SLOTS?: string;
   FACTORY_ACTOR?: DurableObjectNamespace;

@@ -1,6 +1,7 @@
+import { getPipeline } from "../api/pipeline";
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { STAGES, money } from "../types";
+import { money } from "../types";
 import { getDivisions } from "../api/operations";
 import { getPortfolio } from "../api/products";
 import { AsyncState, EmptyState } from "../components/AsyncState";
@@ -8,6 +9,7 @@ import { RefreshControl } from "../components/RefreshControl";
 import { ProductCard } from "../components/ProductCard";
 import { useApi } from "../hooks/useApi";
 export default function Portfolio() {
+  const pipeline = useApi(getPipeline);
   const [params] = useSearchParams();
   const divisions = useApi(getDivisions);
   const [division, setDivision] = useState(params.get("division") || "all");
@@ -107,9 +109,11 @@ export default function Portfolio() {
                 onChange={(event) => setStage(event.target.value)}
               >
                 <option value="all">All stages</option>
-                {STAGES.map((value) => (
-                  <option key={value}>{value}</option>
-                ))}
+                {(pipeline.data ?? [])
+                  .map((p) => p.stage)
+                  .map((value) => (
+                    <option key={value}>{value}</option>
+                  ))}
               </select>
             </label>
             <label>

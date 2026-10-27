@@ -1,4 +1,6 @@
-# ICVS automation layer
+# ICVS automation layer (v2 contract)
+
+For new v3 workflows, Research, automatic publishing and configuration pinning, see [MAX Universe v3](07_MAX_UNIVERSE.md). The behavior below remains the compatibility contract for existing v2 workflows.
 
 ICVS coordinates products using the existing Worker, D1 binding, `ProductFactoryActor`, dashboard and governor API. MAX-CORE is unchanged. The Simulation engine imports its existing deterministic Simulation primitive; it does not implement a second runtime, scheduler or storage abstraction.
 

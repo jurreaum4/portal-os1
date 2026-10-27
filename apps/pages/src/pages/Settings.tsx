@@ -20,7 +20,7 @@ export default function Settings() {
           <h1>
             Settings<span className="title-dot">.</span>
           </h1>
-          <p>Manage your connection and governor access.</p>
+          <p>Manage your connection and Universe access.</p>
         </div>
       </div>
       <section className="panel settings-panel">
@@ -31,10 +31,11 @@ export default function Settings() {
         <code className="endpoint">
           {API_URL || "Same-origin API /api (local Vite proxy → Worker)"}
         </code>
-        <h2 className="subheading">Governor access</h2>
+        <h2 className="subheading">Universe access</h2>
         <p className="muted">
-          Enter the governor token to approve or reject requests. It stays in
-          memory for this tab and clears on reload.
+          Use a viewer credential to explore the Universe, or a governor
+          credential to approve, reject and override. Credentials stay in memory
+          for this tab and clear on reload.
         </p>
         <form
           onSubmit={(event) => {
@@ -44,7 +45,7 @@ export default function Settings() {
             setSaved(true);
           }}
         >
-          <label htmlFor="token">Governor token</label>
+          <label htmlFor="token">Access token</label>
           <input
             id="token"
             type="password"
@@ -70,11 +71,11 @@ export default function Settings() {
               Clear access
             </button>
           </div>
-          {saved && <p role="status">Governor access updated.</p>}
+          {saved && <p role="status">Access updated.</p>}
           <span className="access-state">
             {token
-              ? "Governor token is set for this tab."
-              : "Read access only."}
+              ? "Access credential is set for this tab."
+              : "Legacy public views only; Universe access is not connected."}
           </span>
         </form>
       </section>

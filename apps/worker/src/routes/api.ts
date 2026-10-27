@@ -1,16 +1,13 @@
+import { universeApi } from "../universe/api";
 import type { Env } from "../types";
 
-import {
-  operationalApi,
-  authorize,
-  lifecycle,
-  productColumns,
-} from "../operations";
-const stages = [...lifecycle, "Validation", "Live", "Archived"];
+import { operationalApi, authorize, productColumns } from "../operations";
 const json = (value: unknown, status = 200) => Response.json(value, { status });
 
 export async function routeApi(request: Request, env: Env): Promise<Response> {
   const path = new URL(request.url).pathname;
+  const universe = await universeApi(request, env);
+  if (universe) return universe;
   const operational = await operationalApi(request, env);
   if (operational) return operational;
   const decision = path.match(
@@ -136,6 +133,11 @@ export async function routeApi(request: Request, env: Env): Promise<Response> {
       ).results,
     );
   if (path === "/api/pipeline") {
+    const stages = (
+      await env.DB.prepare(
+        "SELECT id FROM lifecycle_stages ORDER BY position",
+      ).all<{ id: string }>()
+    ).results.map((s) => s.id);
     const rows = (
       await env.DB.prepare(
         `SELECT ${productColumns} FROM products ORDER BY name`,

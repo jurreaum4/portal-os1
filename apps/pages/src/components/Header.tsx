@@ -5,7 +5,9 @@ export function Header() {
   const location = useLocation();
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
-  const page = location.pathname.split("/")[1] || "Dashboard";
+  const page = location.pathname.startsWith("/portal/")
+    ? location.pathname.split("/").at(-1)!
+    : location.pathname.split("/")[1] || "Dashboard";
   return (
     <header className="header">
       <div className="breadcrumb">
