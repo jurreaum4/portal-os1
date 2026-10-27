@@ -13,7 +13,7 @@ export function RefreshControl({
         {refreshing
           ? "Updating…"
           : updatedAt
-            ? `Updated ${new Date(updatedAt).toLocaleTimeString()}`
+            ? `Updated ${new Date(updatedAt).toLocaleTimeString("en-GB")}`
             : "Waiting for data"}
       </span>
       <button onClick={reload} disabled={refreshing}>

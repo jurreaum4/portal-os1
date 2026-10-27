@@ -1635,3 +1635,324 @@ dd {
   margin-top: auto;
   padding-top: 20px;
 }
+
+/* Governor console: operational hierarchy, restrained signals and readable evidence. */
+.command-banner {
+  background: linear-gradient(115deg, #142638, #203f4b);
+  border: 1px solid #335864;
+  color: #f4fbfc;
+  padding: 28px 30px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+.command-banner .eyebrow {
+  color: #83ddc8;
+  letter-spacing: 2px;
+}
+.command-banner h2 {
+  font-size: 27px;
+  margin: 10px 0;
+}
+.command-banner p {
+  color: #c2d1d8;
+  margin-bottom: 0;
+}
+.command-banner .primary {
+  background: #b6ecd5;
+  color: #16372e;
+  border-color: #b6ecd5;
+}
+.console-metrics {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.intelligence-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+  margin-bottom: 24px;
+}
+.intelligence-grid > .panel {
+  margin-bottom: 0;
+}
+.signal-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 0;
+  border-bottom: 1px solid #e8edf0;
+}
+.signal-row:last-child {
+  border-bottom: 0;
+}
+.signal-row > div {
+  flex: 1;
+  min-width: 0;
+}
+.signal-row h3 {
+  font-size: 14px;
+  margin: 4px 0;
+}
+.signal-row p {
+  font-size: 13px;
+  color: #5c6a79;
+  margin: 4px 0;
+  line-height: 1.55;
+}
+.signal-row small {
+  color: #667687;
+  overflow-wrap: anywhere;
+}
+.signal-row:hover h3 {
+  color: #235a9e;
+}
+.signal-icon {
+  background: #edf5f3;
+  color: #276959;
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 19px;
+}
+.alert-icon {
+  background: #fff0e9;
+  color: #9a4c22;
+}
+.signal-status {
+  display: inline-block;
+  border: 1px solid #d7dfe6;
+  background: #f0f3f6;
+  border-radius: 5px;
+  padding: 4px 7px;
+  text-transform: uppercase;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #526170;
+}
+.signal-status.healthy,
+.signal-status.observed {
+  background: #e9f6ef;
+  border-color: #b9dfca;
+  color: #226345;
+}
+.signal-status.degraded,
+.signal-status.unavailable {
+  background: #fff0e9;
+  border-color: #efc4b1;
+  color: #97421e;
+}
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+  margin: 24px 0;
+}
+.health-check {
+  border-left: 2px solid #e1e8ec;
+  padding-left: 14px;
+}
+.health-check h3 {
+  margin: 12px 0 6px;
+}
+.health-check p {
+  font-size: 12px;
+  color: #5d6e7b;
+  line-height: 1.6;
+}
+.department-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 15px;
+}
+.department-card {
+  padding: 18px;
+  border: 1px solid #dce4e9;
+  border-radius: 9px;
+  background: #fff;
+}
+.department-card h3 {
+  letter-spacing: 1px;
+  font-size: 17px;
+}
+.department-card .section-heading {
+  margin-bottom: 18px;
+  gap: 8px;
+}
+.department-card dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 10px 0;
+}
+.department-card dt {
+  color: #5b697a;
+  font-size: 12px;
+}
+.department-card dd {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+.department-card p {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.department-card small {
+  color: #63717e;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.factory-track {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(145px, 1fr));
+  overflow-x: auto;
+  gap: 2px;
+  padding-bottom: 16px;
+  margin: 22px 0;
+  scrollbar-color: #9aabb7 #eef2f5;
+}
+.factory-stage {
+  background: #f0f4f6;
+  border-top: 3px solid #6c9c9b;
+  padding: 16px 12px;
+  min-width: 0;
+}
+.factory-stage > .eyebrow {
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: #657582;
+}
+.factory-stage > strong {
+  display: block;
+  font-size: 30px;
+  font-weight: 500;
+  margin: 18px 0 10px;
+  color: #23424d;
+}
+.factory-stage h3 {
+  font-size: 13px;
+  margin: 4px 0;
+}
+.factory-stage > small {
+  font-size: 11px;
+  color: #647282;
+}
+.factory-product {
+  display: block;
+  background: #fff;
+  border: 1px solid #d7e1e6;
+  border-radius: 5px;
+  padding: 12px;
+  margin-top: 14px;
+  overflow-wrap: anywhere;
+}
+.factory-product > strong {
+  font-size: 13px;
+}
+.factory-product span,
+.factory-product small {
+  display: block;
+  font-size: 11px;
+  margin-top: 8px;
+  color: #586e7e;
+}
+.division-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+.division-tabs button[aria-pressed="true"] {
+  background: #1e3949;
+  border-color: #1e3949;
+  color: #fff;
+}
+.cell-detail {
+  display: block;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #657583;
+  margin-top: 6px;
+}
+.revenue-row {
+  padding: 18px 0;
+  border-bottom: 1px solid #e1e7ea;
+}
+.revenue-row strong {
+  font-size: 24px;
+}
+.revenue-row p {
+  font-size: 12px;
+  color: #63717c;
+}
+textarea {
+  display: block;
+  width: 100%;
+  min-height: 90px;
+  font: inherit;
+  padding: 12px;
+  border: 1px solid #c6d0db;
+  border-radius: 6px;
+  margin: 10px 0 16px;
+  resize: vertical;
+}
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid #7194fa;
+  outline-offset: 3px;
+}
+@media (max-width: 1250px) {
+  .console-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .department-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .health-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 850px) {
+  .intelligence-grid {
+    grid-template-columns: 1fr;
+  }
+  .command-banner {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .console-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .health-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 500px) {
+  .department-grid {
+    grid-template-columns: 1fr;
+  }
+  .command-banner {
+    padding: 22px;
+  }
+  .console-metrics {
+    grid-template-columns: 1fr 1fr;
+  }
+  .signal-row {
+    gap: 10px;
+  }
+  .health-grid {
+    grid-template-columns: 1fr;
+  }
+  .division-tabs button {
+    flex: 1;
+  }
+  .request-review .button-group {
+    flex-wrap: wrap;
+  }
+}
+.command-banner h2 {
+  color: #f4fbfc;
+}

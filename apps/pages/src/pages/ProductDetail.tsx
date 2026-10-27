@@ -1,3 +1,5 @@
+import { getConsole } from "../api/console";
+import { Money } from "../components/Intelligence";
 import { useCallback } from "react";
 import { Link, useParams } from "react-router-dom";
 import { getProduct } from "../api/products";
@@ -9,7 +11,9 @@ export default function ProductDetail() {
     (signal: AbortSignal) => getProduct(id, signal),
     [id],
   );
-  const state = useApi(load);
+  const state = useApi(load, 15000);
+  const consoleState = useApi(getConsole, 15000);
+  const observation = consoleState.data?.products.find((p) => p.id === id);
   return (
     <>
       <Link className="back-link" to="/products">
@@ -51,10 +55,71 @@ export default function ProductDetail() {
                 <dd>{state.data.updatedAt}</dd>
               </div>
             </dl>
-            <Link className="button" to="/approvals">
+            <Link
+              className="button"
+              to={`/approvals?product=${encodeURIComponent(id)}`}
+            >
               Review approval queue →
             </Link>
           </section>
+          <AsyncState {...consoleState} retry={consoleState.reload} />
+          {observation && (
+            <section className="panel detail-panel">
+              <h2>Operational observations</h2>
+              <dl>
+                <div>
+                  <dt>Division</dt>
+                  <dd>{observation.unit ?? "Unassigned"}</dd>
+                </div>
+                <div>
+                  <dt>Factory stage</dt>
+                  <dd>{observation.factoryStage ?? "Unclassified"}</dd>
+                </div>
+                <div>
+                  <dt>Status</dt>
+                  <dd>{observation.status ?? "Not reported"}</dd>
+                </div>
+                <div>
+                  <dt>Health</dt>
+                  <dd>
+                    {observation.health === null
+                      ? "Not reported"
+                      : `${observation.health}/100`}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Revenue</dt>
+                  <dd>
+                    <Money
+                      minor={observation.revenueMinor}
+                      currency={observation.currency}
+                    />{" "}
+                    {observation.revenuePeriod}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Forecast</dt>
+                  <dd>
+                    {observation.forecast ?? "Not reported"}{" "}
+                    {observation.forecastDueAt}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Source</dt>
+                  <dd>{observation.source ?? "No observation"}</dd>
+                </div>
+                <div>
+                  <dt>Observed at</dt>
+                  <dd>
+                    {observation.observedAt ?? "Not reported"}
+                    {observation.stale && observation.observedAt
+                      ? " · Stale"
+                      : ""}
+                  </dd>
+                </div>
+              </dl>
+            </section>
+          )}
         </>
       )}
     </>

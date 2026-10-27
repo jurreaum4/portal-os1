@@ -1,23 +1,20 @@
-import { env, SELF, applyD1Migrations } from "cloudflare:test";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { env, SELF, applyD1Migrations, reset } from "cloudflare:test";
+import { beforeEach, describe, expect, it } from "vitest";
 import worker from "../src/index";
 import type { Env } from "../src/types";
 import type { D1Migration } from "@cloudflare/vitest-plugin";
 
-const bindings = env as unknown as Env & { TEST_MIGRATIONS: D1Migration[] };
+const bindings = env as unknown as Env & {
+  DB: D1Database;
+  TEST_MIGRATIONS: D1Migration[];
+};
 const origin = "http://localhost:5173";
 const get = (path: string, init?: RequestInit) =>
   SELF.fetch(`https://portal.test${path}`, init);
 const authorize = { Authorization: "Bearer synthetic-test-token" };
-beforeAll(async () => {
-  await applyD1Migrations(bindings.DB, bindings.TEST_MIGRATIONS);
-});
 beforeEach(async () => {
-  await bindings.DB.batch([
-    bindings.DB.prepare("DELETE FROM approvals"),
-    bindings.DB.prepare("DELETE FROM products"),
-    bindings.DB.prepare("DELETE FROM virtual_processes"),
-  ]);
+  await reset();
+  await applyD1Migrations(bindings.DB, bindings.TEST_MIGRATIONS);
   await bindings.DB.prepare(
     "INSERT INTO products (id,name,stage,score) VALUES ('one','One','Ready',80),('two','Two','Live',90)",
   ).run();

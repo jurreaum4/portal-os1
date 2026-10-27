@@ -27,9 +27,9 @@ npm run dev:worker
 npm run dev:pages
 ```
 
-Open `http://localhost:5173`. Pages calls `http://localhost:8787` by default. The dashboard uses only `GET /api/dashboard`; other screens load their own endpoints. No provider credentials or emulators are needed for local D1 and Durable Objects: Wrangler supplies those bindings.
+Open `http://localhost:5173`. With `VITE_API_URL` unset, local Pages proxies `/api` to `http://localhost:8787`. The Governor dashboard uses `GET /api/console` and `GET /api/system-health`; legacy endpoints remain compatible. No provider credentials or emulators are needed for local D1 and Durable Objects: Wrangler supplies those bindings.
 
-To enable local approval decisions, create `.dev.vars` at the repo root containing `GOVERNOR_API_TOKEN="<a-long-random-token>"`, restart the Worker, then enter that token in Settings. Never use a `VITE_` variable for this secret. The browser keeps the entered token in memory only. Read endpoints are public; protect the entire deployment with Cloudflare Access if your portfolio is private. This token is a minimal single-governor control; identity management and per-user roles require a separate integration.
+To enable local approval decisions, create `.dev.vars` at the repo root containing `GOVERNOR_API_TOKEN="<a-long-random-token>"`, restart the Worker, then sign in with that token in Settings. Never use a `VITE_` variable for this secret. The browser keeps the entered token in memory only. Read endpoints are public; protect the entire deployment with Cloudflare Access if your portfolio is private. This token is a minimal single-governor control; identity management and per-user roles require a separate integration.
 
 ```sh
 npm run typecheck

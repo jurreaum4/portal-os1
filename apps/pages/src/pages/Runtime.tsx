@@ -1,3 +1,4 @@
+import { SystemHealth } from "../components/SystemHealth";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { getTelemetry } from "../api/analytics";
@@ -26,6 +27,7 @@ export default function Runtime() {
         </div>
         <RefreshControl {...state} />
       </div>
+      <SystemHealth />
       <div className="monitor-toolbar">
         <label className="toggle">
           <input

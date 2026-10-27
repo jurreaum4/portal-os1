@@ -1,22 +1,31 @@
-import { getPipeline } from "../api/pipeline";
-import { PipelineBoard } from "../components/PipelineBoard";
-import { AsyncState } from "../components/AsyncState";
+import { getConsole } from "../api/console";
 import { useApi } from "../hooks/useApi";
+import { AsyncState } from "../components/AsyncState";
+import { RefreshControl } from "../components/RefreshControl";
+import { Factory } from "../components/Factory";
 export default function Pipeline() {
-  const state = useApi(getPipeline);
+  const state = useApi(getConsole, 15000);
   return (
     <>
       <div className="page-heading">
         <div>
-          <div className="eyebrow">FORWARD MOMENTUM</div>
+          <div className="eyebrow">AUTONOMOUS PRODUCT FACTORY</div>
           <h1>
-            Pipeline<span className="title-dot">.</span>
+            Product pipeline<span className="title-dot">.</span>
           </h1>
-          <p>Follow each product from its first idea to live release.</p>
+          <p>
+            System-reported progression from idea to publication. Refreshes
+            every 15 seconds.
+          </p>
         </div>
+        <RefreshControl {...state} />
       </div>
       <AsyncState {...state} retry={state.reload} />
-      {state.data && <PipelineBoard columns={state.data} />}
+      {state.data && <Factory data={state.data} />}
+      <p className="muted">
+        Test includes QA. Ready means ready to publish. Stage counts describe
+        current position, not proof that earlier stages completed.
+      </p>
     </>
   );
 }
