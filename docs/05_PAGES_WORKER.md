@@ -8,7 +8,7 @@ flowchart LR
   Worker --> Actors[Durable Objects: existing kernel IPC]
 ```
 
-ICVS lives in `icvs/index.ts`; MAX-CORE is an integration boundary awaiting its actual implementation. The per-product factory actor now coordinates planning artifacts and stops at an explicit Build handoff. No external build executor, QA runner, scheduler, recovery engine, or publication provider is configured. Approval decisions record governor intent; they do not publish products automatically.
+The ICVS cognitive bridge remains in `icvs/index.ts`. The automation layer coordinates the existing factory actor and uses MAX-CORE's existing simulation API unchanged. See [ICVS automation](06_ICVS_AUTOMATION.md) for the current engine, execution and recovery contracts. Build and QA require a trusted executor binding; publishing is outside this lifecycle.
 
 ## API
 
@@ -20,7 +20,7 @@ All responses are JSON. New endpoints return 404 for unknown routes or IDs, 405 
 | `GET /api/products`               | Array of products                                                                     |
 | `GET /api/products/:id`           | One product, or 404                                                                   |
 | `GET /api/portfolio`              | Products ranked by score, highest first                                               |
-| `GET /api/pipeline`               | Array of `{ stage, products }` covering ten lifecycle stages plus three legacy stages |
+| `GET /api/pipeline`               | Array of `{ stage, products }` covering automation and preserved legacy stages |
 | `GET /api/approvals`              | Pending `{ id, productId, project, action, priority, risk, status }` records          |
 | `POST /api/approvals/:id/approve` | `{ success: true, status: "approved" }`                                               |
 | `POST /api/approvals/:id/reject`  | `{ success: true, status: "rejected" }`                                               |
@@ -28,7 +28,7 @@ All responses are JSON. New endpoints return 404 for unknown routes or IDs, 405 
 | `GET /api/telemetry`              | `{ state, count }[]` from virtual processes                                           |
 | `GET /api/governance`             | `{ status, count }[]` from approval history                                           |
 
-Product fields: `id`, `name`, `description`, `stage`, `score` (0–100), `updatedAt` (SQLite UTC timestamp), `divisionId`, `revenue` (monthly USD), and `status` (On track, Attention, Paused). Stages: Idea, Discovery, Specification, Architecture, Simulation, Build, Test, Package, Ready, Published; legacy Validation, Live and Archived remain supported. Active products means Live or Published; ready to publish means Ready. Process health is the rounded percentage of READY, RUNNING, and SUSPENDED processes among all stored processes. It is `null` when there are none. This measures stored process states, not a live heartbeat or infrastructure SLA.
+Product fields: `id`, `name`, `description`, `stage`, `score` (0–100), `updatedAt` (SQLite UTC timestamp), `divisionId`, `revenue` (monthly USD), and `status` (On track, Attention, Paused). Stages: Idea, Discovery, Specification, Architecture, Simulation, Build, QA, Test, Package, Ready, Published; legacy Validation, Live and Archived remain supported. Active products means Live or Published; ready to publish means Ready. Process health is the rounded percentage of READY, RUNNING, and SUSPENDED processes among all stored processes. It is `null` when there are none. This measures stored process states, not a live heartbeat or infrastructure SLA.
 
 Decision requests require `Authorization: Bearer <GOVERNOR_API_TOKEN>`. Missing server configuration returns 503; invalid authorization returns 401. Decisions atomically update only pending requests; a second decision returns 409, a nonexistent ID returns 404. Changes persist in D1. SQL values are parameterized. The API accepts validated new product intake and division creation; it does not accept arbitrary product edits.
 
@@ -53,7 +53,7 @@ The pre-existing workflow under `github/workflows/` is not an active GitHub Acti
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /api/divisions`                  | Registered `{id,name,color}[]`                                                                                                                                                    |
 | `POST /api/divisions`                 | Authenticated `{name}`; creates a future division, duplicate name returns 409                                                                                                     |
-| `POST /api/intake`                    | Authenticated `{name,description,divisionId}`; creates an Idea and activity in one D1 transaction                                                                                 |
+| `POST /api/intake`                    | Authenticated `{name,description,divisionId}`; creates an Idea and activity in one D1 transaction and automatically starts durable processing                                                                                 |
 | `GET /api/overview`                   | Average portfolio score, revenue, build queue, flags and published counts                                                                                                         |
 | `GET /api/runtime`                    | `{processes,sampledAt,source}`; stored kernel states                                                                                                                              |
 | `GET /api/processes`                  | Stored process IDs, owners, states and last heartbeat epochs                                                                                                                      |
@@ -65,12 +65,8 @@ The pre-existing workflow under `github/workflows/` is not an active GitHub Acti
 | `GET /api/departments`                | Eight department queues, KPIs, health flags and recorded outputs                                                                                                                  |
 | `POST /api/approvals/:id/override`    | Authenticated `{reason}` (10–1000 characters); atomically finalizes a pending request as overridden; does not reverse prior decisions or publish                                  |
 | `GET /api/decisions`                  | Latest 50 finalized decisions including override reasons                                                                                                                          |
-| `GET /api/factory`                    | Latest 100 persisted planning runs                                                                                                                                                |
-| `POST /api/factory/:productId/run`    | Authenticated; per-product actor serializes planning from Idea/Discovery/Validation; returns a Build-blocked run (201 new, 200 reused); invalid stage 409, insufficient brief 422 |
+| `GET /api/factory`                    | Latest 100 persisted automation runs                                                                                                                                                |
+| `POST /api/factory/:productId/run`    | Authenticated compatibility entry point; starts durable automation from Idea/Discovery/Validation (201 new, 200 reused); invalid stage 409, insufficient brief 422 |
 | `GET /api/factory/:productId/outputs` | Persisted planning outputs (JSON text) ordered by creation                                                                                                                        |
 
-All new writes use the existing governor bearer token. Missing configuration returns 503 and invalid authorization returns 401. Invalid intake returns 400. Factory transaction failures leave no partial planning result. Its partial unique index prevents multiple active runs per product. Planning artifacts are templates, with explicit review requirements, not generated implementations or runtime simulations. Build, QA, packaging and publishing remain blocked pending execution integrations.
-
-DATA currently surfaces recorded scores through intelligence views; it does not autonomously compute validated product scores. Department health is derived from product Attention flags. System health does not probe Durable Object availability or deployment health; it reports configuration separately. Existing product rows default to MAX Games, zero monthly revenue, and On track because their legacy records did not carry those fields. Reconcile those defaults through trusted backend administration before relying on migrated division or financial data.
-
-Apply migrations 0003 and 0004 remotely using the documented migration procedure before deploying this revision. `wrangler.toml` adds only the new factory actor's `v2` migration; preserve `v1`. The optional local seed contains synthetic products across all four divisions and no invented runtime or successful deployment events.
+All writes retain the existing governor authorization and validation. Automated runs use the same existing actor and D1; the governor no longer starts planning from the dashboard. Refer to [the ICVS contract](06_ICVS_AUTOMATION.md) for atomic projections, retry behavior, scoring, auditability and execution requirements. Apply migrations through 0005 before deployment. Keep all existing DO migrations and bindings.

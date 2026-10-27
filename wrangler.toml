@@ -28,3 +28,6 @@ new_sqlite_classes = ["MicrokernelProcessActor"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["ProductFactoryActor"]
+
+[triggers]
+crons = ["* * * * *"]

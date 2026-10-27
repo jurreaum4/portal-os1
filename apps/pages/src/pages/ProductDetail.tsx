@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getOutputs, getDivisions } from "../api/operations";
+import { getOutputs, getDivisions, getTransitions } from "../api/operations";
 import { money } from "../types";
 import { getProduct } from "../api/products";
 import { AsyncState } from "../components/AsyncState";
@@ -11,12 +11,17 @@ export default function ProductDetail() {
     (signal: AbortSignal) => getProduct(id, signal),
     [id],
   );
-  const state = useApi(load);
+  const state = useApi(load, 15000);
   const loadOutputs = useCallback(
     (signal: AbortSignal) => getOutputs(id, signal),
     [id],
   );
-  const outputs = useApi(loadOutputs);
+  const outputs = useApi(loadOutputs, 15000);
+  const loadTransitions = useCallback(
+    (signal: AbortSignal) => getTransitions(id, signal),
+    [id],
+  );
+  const transitions = useApi(loadTransitions, 15000);
   const divisions = useApi(getDivisions);
   return (
     <>
@@ -82,11 +87,31 @@ export default function ProductDetail() {
             </Link>
           </section>
           <section className="panel output-panel">
+            <h2>Lifecycle history</h2>
+            <AsyncState {...transitions} retry={transitions.reload} />
+            {transitions.data?.length === 0 && (
+              <p className="muted">No automation transitions recorded.</p>
+            )}
+            {transitions.data?.map((event) => (
+              <details key={event.id}>
+                <summary>
+                  {event.fromStage ?? "Intake"} → {event.toStage} ·{" "}
+                  {event.engine}
+                </summary>
+                <p>{event.reason}</p>
+                <p className="muted">
+                  {event.actor} · {event.createdAt} · Event {event.sequence}
+                </p>
+                <pre>{event.evidence}</pre>
+              </details>
+            ))}
+          </section>
+          <section className="panel output-panel">
             <h2>Factory outputs</h2>
             <AsyncState {...outputs} retry={outputs.reload} />
             {outputs.data?.length === 0 && (
               <p className="muted">
-                No planning outputs yet. Start a run in the product factory.
+                No outputs yet. Automation starts after intake.
               </p>
             )}
             {outputs.data?.map((o) => (

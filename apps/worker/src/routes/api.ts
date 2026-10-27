@@ -51,6 +51,27 @@ export async function routeApi(request: Request, env: Env): Promise<Response> {
         : decision[2] === "override"
           ? "overridden"
           : "rejected";
+    const workflow = await env.DB.prepare(
+      `SELECT a.product_id AS productId FROM workflow_approvals w
+      JOIN approvals a ON a.id=w.approval_id WHERE w.approval_id=?`,
+    )
+      .bind(id)
+      .first<{ productId: string }>();
+    if (workflow) {
+      if (!env.FACTORY_ACTOR)
+        return json({ error: "Factory actor is unavailable" }, 503);
+      return env.FACTORY_ACTOR.get(
+        env.FACTORY_ACTOR.idFromName(workflow.productId),
+      ).fetch("https://factory.internal/decision", {
+        method: "POST",
+        body: JSON.stringify({
+          productId: workflow.productId,
+          approvalId: id,
+          status,
+          note,
+        }),
+      });
+    }
     const result = await env.DB.prepare(
       "UPDATE approvals SET status = ?, decision_note = ?, decided_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'",
     )

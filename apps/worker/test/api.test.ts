@@ -1,4 +1,9 @@
-import { env, SELF, applyD1Migrations } from "cloudflare:test";
+import {
+  env,
+  SELF,
+  applyD1Migrations,
+  runInDurableObject,
+} from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import worker from "../src/index";
 import type { Env } from "../src/types";
@@ -19,7 +24,34 @@ beforeAll(async () => {
       "INSERT INTO approvals (id,product_id,action,priority,risk,status) VALUES ('legacy-decision','legacy','Publish','High','Low','approved')",
     ),
   ]);
-  await applyD1Migrations(bindings.DB, bindings.TEST_MIGRATIONS.slice(2));
+  await applyD1Migrations(bindings.DB, bindings.TEST_MIGRATIONS.slice(2, 4));
+  await bindings.DB.batch([
+    bindings.DB.prepare(
+      "INSERT INTO factory_runs(id,product_id,status,stage) VALUES ('old-run','legacy','blocked','Build')",
+    ),
+    bindings.DB.prepare(
+      "INSERT INTO factory_outputs(id,run_id,engine,content) VALUES ('old-output','old-run','Specification','{}')",
+    ),
+    bindings.DB.prepare(
+      "INSERT INTO activity(id,product_id,title,department) VALUES ('old-activity','legacy','Preserved event','STRAT')",
+    ),
+    bindings.DB.prepare(
+      "INSERT INTO deployments(id,product_id,environment,status) VALUES ('old-deployment','legacy','test','succeeded')",
+    ),
+  ]);
+  await applyD1Migrations(bindings.DB, bindings.TEST_MIGRATIONS.slice(4));
+  for (const table of [
+    "factory_runs",
+    "factory_outputs",
+    "activity",
+    "deployments",
+  ]) {
+    expect(
+      await bindings.DB.prepare(`SELECT COUNT(*) AS count FROM ${table}`).first(
+        "count",
+      ),
+    ).toBe(1);
+  }
   expect(
     await bindings.DB.prepare(
       "SELECT stage,score,division_id FROM products WHERE id='legacy'",
@@ -36,6 +68,8 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   await bindings.DB.batch([
+    bindings.DB.prepare("DELETE FROM workflow_approvals"),
+    bindings.DB.prepare("DELETE FROM workflow_events"),
     bindings.DB.prepare("DELETE FROM deployments"),
     bindings.DB.prepare("DELETE FROM factory_outputs"),
     bindings.DB.prepare("DELETE FROM factory_runs"),
@@ -86,7 +120,7 @@ describe("Worker API and D1 integration", () => {
       stage: string;
       products: unknown[];
     }[];
-    expect(pipeline).toHaveLength(13);
+    expect(pipeline).toHaveLength(14);
     expect(
       pipeline.find((row) => row.stage === "Ready")?.products,
     ).toHaveLength(1);
@@ -306,15 +340,25 @@ describe("Command centre operations", () => {
     });
     expect(intake.status).toBe(201);
     const { id } = (await intake.json()) as { id: string };
+    await runInDurableObject(
+      bindings.FACTORY_ACTOR!.get(bindings.FACTORY_ACTOR!.idFromName(id)),
+      async (_instance, ctx) => {
+        await ctx.storage.deleteAlarm();
+      },
+    );
     expect(await (await get(`/api/products/${id}`)).json()).toMatchObject({
       divisionId: division.id,
-      stage: "Idea",
+      stage: expect.stringMatching(
+        /^(Idea|Discovery|Specification|Architecture|Simulation|Build)$/,
+      ),
       revenue: 0,
       status: "On track",
     });
-    expect(await (await get("/api/activity")).json()).toMatchObject([
-      { productId: id, department: "STRAT" },
-    ]);
+    expect(await (await get("/api/activity")).json()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ productId: id, department: "STRAT" }),
+      ]),
+    );
     expect(
       (
         await get("/api/divisions", {
@@ -324,13 +368,6 @@ describe("Command centre operations", () => {
         })
       ).status,
     ).toBe(409);
-    await bindings.DB.prepare("DELETE FROM activity WHERE product_id=?")
-      .bind(id)
-      .run();
-    await bindings.DB.prepare("DELETE FROM products WHERE id=?").bind(id).run();
-    await bindings.DB.prepare("DELETE FROM divisions WHERE id=?")
-      .bind(division.id)
-      .run();
   });
   it("requires an override reason, preserves finality and exposes history", async () => {
     const post = (body: unknown) =>
@@ -361,32 +398,47 @@ describe("Command centre operations", () => {
       stage: "Ready",
     });
   });
-  it("serializes factory planning, persists outputs, and stops before external execution", async () => {
+  it("serializes durable automation and blocks truthfully without an executor", async () => {
+    const id = crypto.randomUUID();
     await bindings.DB.prepare(
-      "UPDATE products SET stage='Idea',description='A synthetic product brief with concrete goals for planning' WHERE id='one'",
-    ).run();
+      "INSERT INTO products(id,name,description,stage) VALUES (?,'Automation test','Concrete test brief describing an executable project','Idea')",
+    )
+      .bind(id)
+      .run();
     const post = () =>
-      get("/api/factory/one/run", { method: "POST", headers: authorize });
+      get(`/api/factory/${id}/run`, { method: "POST", headers: authorize });
     const responses = await Promise.all([post(), post()]);
     expect(responses.map((r) => r.status).sort()).toEqual([200, 201]);
-    expect(await (await get("/api/factory")).json()).toMatchObject([
-      { productId: "one", status: "blocked", stage: "Build" },
-    ]);
-    const outputs = (await (await get("/api/factory/one/outputs")).json()) as {
-      engine: string;
-      content: string;
-    }[];
-    expect(outputs.map((o) => o.engine)).toEqual([
-      "Intake",
+    const stub = bindings.FACTORY_ACTOR!.get(
+      bindings.FACTORY_ACTOR!.idFromName(id),
+    );
+    for (let i = 0; i < 7; i++)
+      await runInDurableObject(stub, async (instance: any, ctx) => {
+        await instance.alarm();
+        await ctx.storage.deleteAlarm();
+      });
+    expect(await (await get(`/api/products/${id}`)).json()).toMatchObject({
+      stage: "Build",
+      status: "Attention",
+    });
+    const transitions = (await (
+      await get(`/api/factory/${id}/transitions`)
+    ).json()) as { toStage: string }[];
+    expect(transitions.map((t) => t.toStage)).toEqual([
+      "Idea",
+      "Discovery",
       "Specification",
       "Architecture",
       "Simulation",
+      "Build",
+      "Build",
     ]);
-    expect(JSON.parse(outputs[3].content)).toMatchObject({
-      executionSimulated: false,
-    });
-    expect(await (await get("/api/products/one")).json()).toMatchObject({
-      stage: "Build",
+    expect(await (await get("/api/factory")).json()).toMatchObject([
+      { productId: id, status: "blocked", stage: "Build" },
+    ]);
+    expect((await post()).status).toBe(200);
+    await runInDurableObject(stub, async (_instance, ctx) => {
+      await ctx.storage.deleteAlarm();
     });
     expect(
       (
@@ -404,5 +456,248 @@ describe("Command centre operations", () => {
         })
       ).status,
     ).toBe(409);
+  });
+});
+
+describe("ICVS execution and recovery", () => {
+  async function start() {
+    const id = crypto.randomUUID();
+    await bindings.DB.prepare(
+      "INSERT INTO products(id,name,description,stage) VALUES (?,'Executor contract test','Verify a supplied brief against an immutable build artifact','Idea')",
+    )
+      .bind(id)
+      .run();
+    await get(`/api/factory/${id}/run`, { method: "POST", headers: authorize });
+    const stub = bindings.FACTORY_ACTOR!.get(
+      bindings.FACTORY_ACTOR!.idFromName(id),
+    );
+    await runInDurableObject(stub, async (_instance, ctx) => {
+      await ctx.storage.deleteAlarm();
+    });
+    return { id, stub };
+  }
+  // Test-only executor fixture; never used by application code or seeded into D1 outside tests.
+  async function drive(stub: DurableObjectStub, wrongDigest = false) {
+    await runInDurableObject(stub, async (instance: any, ctx) => {
+      instance.env.ICVS_EXECUTOR = {
+        fetch: async (_url: string, init: RequestInit) => {
+          const request = JSON.parse(init.body as string);
+          expect(init.headers).toMatchObject({
+            "Idempotency-Key": request.operationId,
+          });
+          return Response.json({
+            operationId: request.operationId,
+            artifact: "https://test.invalid/artifact",
+            digest: (wrongDigest && request.stage === "QA" ? "b" : "a").repeat(
+              64,
+            ),
+            checks:
+              request.stage === "QA"
+                ? [
+                    {
+                      requirement: "brief",
+                      passed: true,
+                      report: "https://test.invalid/report",
+                    },
+                  ]
+                : [],
+          });
+        },
+      };
+      await instance.alarm();
+      await ctx.storage.deleteAlarm();
+    });
+  }
+  for (const action of ["approve", "reject", "override"]) {
+    it(`automatically verifies execution and handles ${action} with an audit trail`, async () => {
+      const { id, stub } = await start();
+      for (let i = 0; i < 9; i++) await drive(stub);
+      const approval = await bindings.DB.prepare(
+        "SELECT id FROM approvals WHERE product_id=? AND status='pending'",
+      )
+        .bind(id)
+        .first<{ id: string }>();
+      expect(approval).not.toBeNull();
+      expect(await (await get(`/api/products/${id}`)).json()).toMatchObject({
+        stage: "QA",
+      });
+      const responses = await Promise.all(
+        [1, 2].map(() =>
+          get(`/api/approvals/${approval!.id}/${action}`, {
+            method: "POST",
+            headers: authorize,
+            body: JSON.stringify({
+              reason: "Governor reviewed the verified evidence.",
+            }),
+          }),
+        ),
+      );
+      expect(responses.map((r) => r.status).sort()).toEqual([200, 409]);
+      expect(await (await get(`/api/products/${id}`)).json()).toMatchObject({
+        stage: action === "reject" ? "Archived" : "Ready",
+        score: action === "reject" ? 0 : 100,
+      });
+      const events = (await (
+        await get(`/api/factory/${id}/transitions`)
+      ).json()) as any[];
+      expect(events.map((e) => e.sequence)).toEqual(
+        events.map((_, i) => i + 1),
+      );
+      expect(events.at(-1)).toMatchObject({
+        actor: "governor",
+        engine: action === "reject" ? "Archive" : "Promotion",
+      });
+      expect(
+        (await bindings.DB.prepare("PRAGMA foreign_key_check").all()).results,
+      ).toEqual([]);
+    });
+  }
+  it("blocks QA for a different artifact and never creates a promotion request", async () => {
+    const { id, stub } = await start();
+    for (let i = 0; i < 9; i++) await drive(stub, true);
+    expect(await (await get(`/api/products/${id}`)).json()).toMatchObject({
+      stage: "QA",
+      status: "Attention",
+    });
+    expect(
+      await bindings.DB.prepare("SELECT id FROM approvals WHERE product_id=?")
+        .bind(id)
+        .first(),
+    ).toBeNull();
+  });
+  it("replays a durable journal after D1 projection fails without duplicate events", async () => {
+    const { id, stub } = await start();
+    await bindings.DB.exec(
+      "CREATE TRIGGER fail_icvs BEFORE INSERT ON workflow_events BEGIN SELECT RAISE(FAIL, 'test projection unavailable'); END;",
+    );
+    await drive(stub);
+    await runInDurableObject(stub, async (_instance, ctx) => {
+      expect((await ctx.storage.get<any>("workflow")).pending).toBeDefined();
+    });
+    await bindings.DB.exec("DROP TRIGGER fail_icvs;");
+    await drive(stub);
+    const events = (
+      await bindings.DB.prepare(
+        "SELECT sequence FROM workflow_events WHERE product_id=? ORDER BY sequence",
+      )
+        .bind(id)
+        .all<{ sequence: number }>()
+    ).results;
+    expect(events.map((e) => e.sequence)).toEqual(events.map((_, i) => i + 1));
+    await runInDurableObject(stub, async (_instance, ctx) => {
+      expect((await ctx.storage.get<any>("workflow")).pending).toBeUndefined();
+    });
+  });
+  it("serializes portfolio resource allocation and reclaims expired leases", async () => {
+    const stub = bindings.FACTORY_ACTOR!.get(
+      bindings.FACTORY_ACTOR!.idFromName("allocation-test"),
+    );
+    const send = (path: string, owner: string) =>
+      stub.fetch(`https://factory.internal/${path}`, {
+        method: "POST",
+        body: JSON.stringify({ owner }),
+      });
+    const results = await Promise.all(
+      ["one", "two", "three"].map((owner) => send("allocate", owner)),
+    );
+    expect(results.map((r) => r.status).sort()).toEqual([200, 200, 429]);
+    expect((await send("allocate", "one")).status).toBe(200);
+    await send("release", "one");
+    expect((await send("allocate", "three")).status).toBe(200);
+    await runInDurableObject(stub, async (_instance, ctx) => {
+      await ctx.storage.put("leases", { expired: Date.now() - 1 });
+    });
+    expect((await send("allocate", "four")).status).toBe(200);
+  });
+});
+
+describe("ICVS upgrade and terminal recovery", () => {
+  it("adopts an existing Build handoff without duplicating the run or losing artifacts", async () => {
+    const id = crypto.randomUUID();
+    await bindings.DB.batch([
+      bindings.DB.prepare(
+        "INSERT INTO products(id,name,description,stage) VALUES (?,'Existing handoff','An existing detailed brief awaiting actual execution','Build')",
+      ).bind(id),
+      bindings.DB.prepare(
+        "INSERT INTO factory_runs(id,product_id,status,stage) VALUES (?,?,'blocked','Build')",
+      ).bind(id, id),
+      bindings.DB.prepare(
+        "INSERT INTO factory_outputs(id,run_id,engine,content) VALUES (?,?,'Specification','{}')",
+      ).bind(id, id),
+    ]);
+    const response = await get(`/api/factory/${id}/run`, {
+      method: "POST",
+      headers: authorize,
+    });
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ id, stage: "Build" });
+    const stub = bindings.FACTORY_ACTOR!.get(
+      bindings.FACTORY_ACTOR!.idFromName(id),
+    );
+    await runInDurableObject(stub, async (_instance, ctx) => {
+      await ctx.storage.deleteAlarm();
+    });
+    expect(
+      await bindings.DB.prepare(
+        "SELECT COUNT(*) AS count FROM factory_runs WHERE product_id=?",
+      )
+        .bind(id)
+        .first("count"),
+    ).toBe(1);
+    expect(
+      await bindings.DB.prepare("SELECT id FROM factory_outputs WHERE id=?")
+        .bind(id)
+        .first("id"),
+    ).toBe(id);
+  });
+  it("retains the retry alarm until a terminal journal is projected", async () => {
+    const id = crypto.randomUUID();
+    await bindings.DB.prepare(
+      "INSERT INTO products(id,name,description,stage) VALUES (?,'Terminal recovery','A detailed requirement for terminal journal recovery','Idea')",
+    )
+      .bind(id)
+      .run();
+    await get(`/api/factory/${id}/run`, { method: "POST", headers: authorize });
+    const stub = bindings.FACTORY_ACTOR!.get(
+      bindings.FACTORY_ACTOR!.idFromName(id),
+    );
+    // Inject the exact crash boundary (DO committed; terminal D1 batch not committed).
+    await runInDurableObject(stub, async (_instance, ctx) => {
+      await ctx.storage.deleteAlarm();
+      const state = await ctx.storage.get<any>("workflow");
+      state.sequence++;
+      state.stage = "Archived";
+      state.status = "completed";
+      state.message = "Archive recovery";
+      state.pending = {
+        id: `${state.id}:${state.sequence}`,
+        sequence: state.sequence,
+        from: "Idea",
+        to: "Archived",
+        engine: "Archive",
+        actor: "governor",
+        reason: state.message,
+        evidence: { deleted: false },
+        at: new Date().toISOString(),
+      };
+      await ctx.storage.put("workflow", state);
+    });
+    await bindings.DB.exec(
+      "CREATE TRIGGER terminal_failure BEFORE INSERT ON workflow_events BEGIN SELECT RAISE(FAIL, 'test unavailable'); END;",
+    );
+    await runInDurableObject(stub, async (instance: any, ctx) => {
+      await instance.alarm();
+      expect(await ctx.storage.getAlarm()).not.toBeNull();
+      expect((await ctx.storage.get<any>("workflow")).pending).toBeDefined();
+    });
+    await bindings.DB.exec("DROP TRIGGER terminal_failure;");
+    await runInDurableObject(stub, async (instance: any, ctx) => {
+      await instance.alarm();
+      expect(await ctx.storage.getAlarm()).toBeNull();
+      expect((await ctx.storage.get<any>("workflow")).pending).toBeUndefined();
+    });
+    expect(await (await get(`/api/products/${id}`)).json()).toMatchObject({
+      stage: "Archived",
+    });
   });
 });
