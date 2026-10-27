@@ -1,48 +1,28 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { getFactory, getDivisions, mutate } from "../api/operations";
-import { getProducts } from "../api/products";
 import { useApi } from "../hooks/useApi";
 import { useGovernor } from "../layouts/GovernorLayout";
 import { AsyncState, EmptyState } from "../components/AsyncState";
 import { Icon } from "../components/Icon";
 const engines = [
-  ["Intake", "STRAT", "Capture the product brief"],
-  ["Specification", "ARCH", "Create acceptance criteria"],
-  ["Architecture", "ARCH", "Propose system boundaries"],
-  ["Simulation", "ARCH", "Check planning completeness"],
-  ["Build", "BUILD", "Requires build executor"],
-  ["QA", "TEST", "Requires test executor"],
-  ["Package", "OPS", "Requires package artifacts"],
-  ["Publishing", "GOV", "Requires release integration"],
+  ["Idea Intake", "STRAT", "Accept submitted product briefs"],
+  ["Specification", "ARCH", "Derive scope from the submitted brief"],
+  ["Architecture", "ARCH", "Define implementation handoffs"],
+  ["Simulation", "ARCH", "Verify lifecycle reachability"],
+  ["Workflow", "BUILD", "Advance stages and retry interrupted work"],
+  ["Promotion", "GOV", "Require build, QA and governor approval"],
+  ["Archive", "OPS", "Retain rejected projects and their history"],
+  ["Resource Allocation", "OPS", "Limit concurrent execution operations"],
+  ["Project Scoring", "DATA", "Score lifecycle evidence completeness"],
 ];
 export default function Orchestration() {
   const runs = useApi(getFactory, 15000),
-    products = useApi(getProducts, 15000),
     divisions = useApi(getDivisions);
   const { token } = useGovernor();
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [message, setMessage] = useState(""),
-    [selected, setSelected] = useState("");
-  async function run(id: string) {
-    setBusy(true);
-    setError("");
-    setMessage("");
-    try {
-      await mutate(`/api/factory/${encodeURIComponent(id)}/run`, token);
-      runs.reload();
-      products.reload();
-      setMessage(
-        "Planning outputs saved. Open the product to review the specification, architecture, simulation, and build handoff.",
-      );
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Run failed");
-    } finally {
-      setBusy(false);
-    }
-  }
+    [error, setError] = useState("");
   return (
     <>
       <div className="page-heading">
@@ -55,44 +35,37 @@ export default function Orchestration() {
         </div>
         <span className="subtle-badge">
           <Icon name="spark" size={14} />
-          Planning automation
+          Lifecycle automation
         </span>
       </div>
       <div className="engine-grid">
         {engines.map(([name, team, desc], i) => (
-          <div
-            className={`engine-card ${i > 3 ? "pending-engine" : ""}`}
-            key={name}
-          >
+          <div className="engine-card" key={name}>
             <span>
               0{i + 1} <b>{team}</b>
             </span>
             <Icon name={i < 4 ? "spark" : "code"} size={21} />
             <h3>{name}</h3>
             <p>{desc}</p>
-            <small>{i < 4 ? "Available" : "Integration required"}</small>
+            <small>Automatic</small>
           </div>
         ))}
       </div>
       <p className="notice">
-        The factory creates planning artifacts and pauses at Build. Build, QA,
-        packaging, and publication require execution integrations. Governor
-        approval records intent and does not deploy products.
+        Ideas advance automatically through discovery, specification,
+        architecture, simulation, build and QA. Verified projects await Approve,
+        Reject or Override. Build and QA require a connected executor; blocked
+        work stays visible here.
       </p>
       {!token && (
         <p className="notice">
           Connect governor access in <Link to="/settings">Settings</Link> to
-          submit ideas or run the factory.
+          submit ideas.
         </p>
       )}
       {error && (
         <p className="notice error" role="alert">
           {error}
-        </p>
-      )}
-      {message && (
-        <p className="notice success" role="status">
-          {message}
         </p>
       )}
       <div className="analytics-grid">
@@ -167,37 +140,18 @@ export default function Orchestration() {
           </form>
         </section>
         <section className="panel">
-          <h2>Start a planning run</h2>
+          <h2>Automatic lifecycle</h2>
           <p className="muted">
-            Intake → Specification → Architecture → Simulation → Build handoff
+            Idea → Discovery → Specification → Architecture → Simulation → Build
+            → QA → Ready
           </p>
-          <AsyncState {...products} retry={products.reload} />
-          <label className="stacked-label">
-            Product
-            <select
-              value={selected}
-              onChange={(e) => setSelected(e.target.value)}
-            >
-              <option value="">Choose an idea</option>
-              {products.data
-                ?.filter((p) =>
-                  ["Idea", "Discovery", "Validation"].includes(p.stage),
-                )
-                .map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-            </select>
-          </label>
-          <button
-            className="primary"
-            disabled={!token || busy || !selected}
-            onClick={() => void run(selected)}
-          >
-            <Icon name="spark" size={16} />
-            Run planning engines
-          </button>
+          <p>
+            New ideas start automatically. The governor approves, rejects or
+            overrides promotion decisions in the existing approval queue.
+          </p>
+          <Link className="button" to="/approvals">
+            Review decisions →
+          </Link>
           <div className="factory-flow">
             <span>Persisted in D1</span>
             <span>Coordinated by Durable Objects</span>
@@ -212,7 +166,7 @@ export default function Orchestration() {
         </div>
         <AsyncState {...runs} retry={runs.reload} />
         {runs.data?.length === 0 && (
-          <EmptyState>No runs yet. Choose an idea to begin.</EmptyState>
+          <EmptyState>No runs yet. Submit an idea to begin.</EmptyState>
         )}
         {runs.data?.map((r) => (
           <Link

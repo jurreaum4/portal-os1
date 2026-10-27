@@ -6,6 +6,7 @@ export const lifecycle = [
   "Architecture",
   "Simulation",
   "Build",
+  "QA",
   "Test",
   "Package",
   "Ready",
@@ -76,7 +77,7 @@ export const departments = [
     id: "TEST",
     name: "Quality assurance",
     description: "Validation & release confidence",
-    stages: ["Test"],
+    stages: ["QA", "Test"],
   },
   {
     id: "OPS",
@@ -179,6 +180,8 @@ export async function operationalApi(
         .first())
     )
       return json({ error: "Choose an existing division" }, 400);
+    if (!env.FACTORY_ACTOR)
+      return json({ error: "Factory actor is unavailable" }, 503);
     const id = crypto.randomUUID();
     await db.batch([
       db
@@ -192,6 +195,16 @@ export async function operationalApi(
         )
         .bind(crypto.randomUUID(), id, `${name} entered the intake queue`),
     ]);
+    const actor = env.FACTORY_ACTOR.get(env.FACTORY_ACTOR.idFromName(id));
+    // A scheduled reconciliation repairs a failure between intake and actor activation.
+    try {
+      await actor.fetch("https://factory.internal/run", {
+        method: "POST",
+        body: JSON.stringify({ productId: id }),
+      });
+    } catch {
+      /* The committed Idea remains discoverable by reconciliation. */
+    }
     return json({ id }, 201);
   }
   if (request.method !== "GET") return null;
@@ -289,6 +302,26 @@ export async function operationalApi(
           .all()
       ).results,
     );
+  const audit = path.match(/^\/api\/factory\/([^/]+)\/transitions$/);
+  if (audit) {
+    let id: string;
+    try {
+      id = decodeURIComponent(audit[1]);
+    } catch {
+      return json({ error: "Invalid product ID" }, 400);
+    }
+    return json(
+      (
+        await db
+          .prepare(
+            `SELECT id,run_id AS runId,sequence,from_stage AS fromStage,to_stage AS toStage,
+      engine,actor,reason,evidence,created_at AS createdAt FROM workflow_events WHERE product_id=? ORDER BY run_id,sequence`,
+          )
+          .bind(id)
+          .all()
+      ).results,
+    );
+  }
   const outputs = path.match(/^\/api\/factory\/([^/]+)\/outputs$/);
   if (outputs) {
     let id: string;

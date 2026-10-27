@@ -5,6 +5,7 @@ export type Stage =
   | "Architecture"
   | "Simulation"
   | "Build"
+  | "QA"
   | "Test"
   | "Package"
   | "Ready"
@@ -132,6 +133,7 @@ export const STAGES: Stage[] = [
   "Architecture",
   "Simulation",
   "Build",
+  "QA",
   "Test",
   "Package",
   "Ready",
@@ -152,5 +154,18 @@ export interface Deployment {
   name: string;
   environment: string;
   status: string;
+  createdAt: string;
+}
+
+export interface WorkflowTransition {
+  id: string;
+  runId: string;
+  sequence: number;
+  fromStage: string | null;
+  toStage: string;
+  engine: string;
+  actor: string;
+  reason: string;
+  evidence: string;
   createdAt: string;
 }

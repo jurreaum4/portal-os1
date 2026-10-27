@@ -1,6 +1,7 @@
 import { api } from "./client";
 import type {
   Deployment,
+  WorkflowTransition,
   Division,
   SystemHealth,
   Activity,
@@ -37,3 +38,9 @@ export const mutate = <T>(path: string, token: string, body?: unknown) =>
 
 export const getDeployments = (signal?: AbortSignal) =>
   api<Deployment[]>("/api/deployments", { signal });
+
+export const getTransitions = (id: string, signal?: AbortSignal) =>
+  api<WorkflowTransition[]>(
+    `/api/factory/${encodeURIComponent(id)}/transitions`,
+    { signal },
+  );
