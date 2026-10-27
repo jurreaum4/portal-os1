@@ -12,6 +12,9 @@ import Approvals from "./pages/Approvals";
 import Analytics from "./pages/Analytics";
 import Runtime from "./pages/Runtime";
 import Orchestration from "./pages/Orchestration";
+import Departments from "./pages/Departments";
+import Forecasting from "./pages/Forecasting";
+import Governance from "./pages/Governance";
 import Settings from "./pages/Settings";
 import "./style.css";
 createRoot(document.getElementById("root")!).render(
@@ -32,6 +35,9 @@ createRoot(document.getElementById("root")!).render(
             <Route path="runtime" element={<Runtime />} />
             <Route path="orchestration" element={<Orchestration />} />
             <Route path="analytics" element={<Analytics />} />
+            <Route path="departments" element={<Departments />} />
+            <Route path="forecasting" element={<Forecasting />} />
+            <Route path="governance" element={<Governance />} />
             <Route path="settings" element={<Settings />} />
             <Route
               path="*"

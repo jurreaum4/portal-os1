@@ -1,6 +1,4 @@
-export const API_URL = (
-  import.meta.env.VITE_API_URL || "http://localhost:8787"
-).replace(/\/+$/, "");
+export const API_URL = (import.meta.env.VITE_API_URL ?? "").replace(/\/+$/, "");
 export async function api<T>(
   path: string,
   options: RequestInit = {},

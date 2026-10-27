@@ -13,6 +13,11 @@ export function ProductCard({ product }: { product: Product }) {
         </span>
       </div>
       <h3>{product.name}</h3>
+      <span className="product-division">
+        {product.divisionId.startsWith("max-")
+          ? `MAX ${product.divisionId.slice(4)}`
+          : "Division product"}
+      </span>
       <p>{product.description || "No description yet."}</p>
       <div className="product-score">
         <span>Portfolio score</span>

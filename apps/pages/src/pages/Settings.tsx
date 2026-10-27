@@ -1,9 +1,16 @@
 import { useState } from "react";
+import { getDivisions, mutate } from "../api/operations";
+import { useApi } from "../hooks/useApi";
+import { AsyncState } from "../components/AsyncState";
 import { API_URL } from "../api/client";
 import { useGovernor } from "../layouts/GovernorLayout";
 export default function Settings() {
   const { token, setToken } = useGovernor();
   const [draft, setDraft] = useState(token);
+  const divisions = useApi(getDivisions);
+  const [divisionName, setDivisionName] = useState("");
+  const [divisionError, setDivisionError] = useState("");
+  const [creating, setCreating] = useState(false);
   const [saved, setSaved] = useState(false);
   return (
     <>
@@ -21,7 +28,9 @@ export default function Settings() {
         <p className="muted">
           This workspace connects to the API configured at build time.
         </p>
-        <code className="endpoint">{API_URL}</code>
+        <code className="endpoint">
+          {API_URL || "Same-origin API /api (local Vite proxy → Worker)"}
+        </code>
         <h2 className="subheading">Governor access</h2>
         <p className="muted">
           Enter the governor token to approve or reject requests. It stays in
@@ -67,6 +76,61 @@ export default function Settings() {
               ? "Governor token is set for this tab."
               : "Read access only."}
           </span>
+        </form>
+      </section>
+      <section className="panel settings-panel division-settings">
+        <h2>Divisions</h2>
+        <p className="muted">
+          Your ecosystem can grow. Add a division to make it available for
+          product intake and portfolio management.
+        </p>
+        <AsyncState {...divisions} retry={divisions.reload} />
+        {divisions.data?.map((d) => (
+          <div className="stat-row" key={d.id}>
+            <span>{d.name}</span>
+            <span className="badge">Active division</span>
+          </div>
+        ))}
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setCreating(true);
+            setDivisionError("");
+            try {
+              await mutate("/api/divisions", token, { name: divisionName });
+              setDivisionName("");
+              divisions.reload();
+            } catch (c) {
+              setDivisionError(
+                c instanceof Error ? c.message : "Could not create division",
+              );
+            } finally {
+              setCreating(false);
+            }
+          }}
+        >
+          <label htmlFor="division-name">New division name</label>
+          <input
+            id="division-name"
+            value={divisionName}
+            minLength={2}
+            maxLength={80}
+            required
+            onChange={(e) => setDivisionName(e.target.value)}
+          />
+          <button className="primary" disabled={!token || creating}>
+            {creating ? "Adding…" : "Add division"}
+          </button>
+          {!token && (
+            <p className="muted">
+              Governor access is required to add divisions.
+            </p>
+          )}
+          {divisionError && (
+            <p role="alert" className="notice error">
+              {divisionError}
+            </p>
+          )}
         </form>
       </section>
     </>

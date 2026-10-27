@@ -17,9 +17,14 @@ migrations_dir = "apps/worker/d1/migrations"
 
 [durable_objects]
 bindings = [
-  { name = "MICROKERNEL_ACTOR", class_name = "MicrokernelProcessActor" }
+  { name = "MICROKERNEL_ACTOR", class_name = "MicrokernelProcessActor" },
+  { name = "FACTORY_ACTOR", class_name = "ProductFactoryActor" }
 ]
 
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["MicrokernelProcessActor"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["ProductFactoryActor"]

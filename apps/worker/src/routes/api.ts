@@ -1,41 +1,60 @@
 import type { Env } from "../types";
 
-const productColumns =
-  "id, name, description, stage, score, updated_at AS updatedAt";
-const stages = ["Idea", "Validation", "Build", "Ready", "Live", "Archived"];
+import {
+  operationalApi,
+  authorize,
+  lifecycle,
+  productColumns,
+} from "../operations";
+const stages = [...lifecycle, "Validation", "Live", "Archived"];
 const json = (value: unknown, status = 200) => Response.json(value, { status });
 
 export async function routeApi(request: Request, env: Env): Promise<Response> {
   const path = new URL(request.url).pathname;
-  const decision = path.match(/^\/api\/approvals\/([^/]+)\/(approve|reject)$/);
+  const operational = await operationalApi(request, env);
+  if (operational) return operational;
+  const decision = path.match(
+    /^\/api\/approvals\/([^/]+)\/(approve|reject|override)$/,
+  );
   if (decision) {
     if (request.method !== "POST")
       return json({ error: "Method not allowed" }, 405);
-    if (!env.GOVERNOR_API_TOKEN)
-      return json({ error: "Governor decisions are not configured" }, 503);
-    // Hash before comparing so token length and prefix are not exposed by comparison timing.
-    const digest = async (value: string) =>
-      new Uint8Array(
-        await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)),
-      );
-    const supplied = request.headers.get("Authorization") ?? "";
-    const [actual, expected] = await Promise.all([
-      digest(supplied),
-      digest(`Bearer ${env.GOVERNOR_API_TOKEN}`),
-    ]);
-    if (actual.reduce((diff, byte, i) => diff | (byte ^ expected[i]), 0))
-      return json({ error: "Governor authorization required" }, 401);
+    const denied = await authorize(request, env);
+    if (denied) return denied;
+    let note = "";
+    if (decision[2] === "override") {
+      try {
+        const body = (await request.json()) as { reason?: unknown };
+        if (
+          typeof body?.reason !== "string" ||
+          body.reason.trim().length < 10 ||
+          body.reason.length > 1000
+        )
+          throw new Error();
+        note = body.reason.trim();
+      } catch {
+        return json(
+          { error: "An override reason of 10–1000 characters is required" },
+          400,
+        );
+      }
+    }
     let id: string;
     try {
       id = decodeURIComponent(decision[1]);
     } catch {
       return json({ error: "Invalid approval ID" }, 400);
     }
-    const status = decision[2] === "approve" ? "approved" : "rejected";
+    const status =
+      decision[2] === "approve"
+        ? "approved"
+        : decision[2] === "override"
+          ? "overridden"
+          : "rejected";
     const result = await env.DB.prepare(
-      "UPDATE approvals SET status = ?, decided_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'",
+      "UPDATE approvals SET status = ?, decision_note = ?, decided_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'",
     )
-      .bind(status, id)
+      .bind(status, note, id)
       .run();
     if (result.meta.changes === 0) {
       const exists = await env.DB.prepare(
@@ -83,7 +102,7 @@ export async function routeApi(request: Request, env: Env): Promise<Response> {
     return json(
       (
         await env.DB.prepare(
-          `SELECT a.id, a.product_id AS productId, p.name AS project, a.action, a.priority, a.risk, a.status FROM approvals a JOIN products p ON p.id = a.product_id WHERE a.status = 'pending' ORDER BY a.created_at DESC`,
+          `SELECT a.id, a.product_id AS productId, p.name AS project, a.action, a.priority, a.risk, a.status FROM approvals a JOIN products p ON p.id = a.product_id WHERE a.status = 'pending' ORDER BY CASE a.priority WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END, a.created_at DESC`,
         ).all()
       ).results,
     );
@@ -113,7 +132,7 @@ export async function routeApi(request: Request, env: Env): Promise<Response> {
       const productsQuery = `
         SELECT
           COUNT(*) AS projects,
-          COALESCE(SUM(stage = 'Live'),0) AS activeProducts,
+          COALESCE(SUM(stage IN ('Live','Published')),0) AS activeProducts,
           COALESCE(SUM(stage = 'Ready'),0) AS readyToPublish
         FROM products
       `;
@@ -180,6 +199,24 @@ export async function routeApi(request: Request, env: Env): Promise<Response> {
       return json({ error: "Portal data is unavailable" }, 500);
     }
   }
+  if (path === "/api/overview") {
+    return json(
+      await env.DB.prepare(
+        `SELECT ROUND(AVG(score),1) AS portfolioScore,
+      COALESCE(SUM(revenue),0) AS revenue, SUM(stage='Build') AS buildQueue,
+      SUM(status='Attention') AS flagged, SUM(stage IN ('Live','Published')) AS published
+      FROM products`,
+      ).first(),
+    );
+  }
+  if (path === "/api/decisions")
+    return json(
+      (
+        await env.DB.prepare(
+          "SELECT a.id, p.name AS project, a.action, a.status, a.decision_note AS note, a.decided_at AS decidedAt FROM approvals a JOIN products p ON p.id=a.product_id WHERE a.status!='pending' ORDER BY a.decided_at DESC LIMIT 50",
+        ).all()
+      ).results,
+    );
   if (path === "/api/analytics")
     return json(
       (
