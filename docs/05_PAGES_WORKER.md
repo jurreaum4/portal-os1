@@ -1,5 +1,7 @@
 # Pages and Worker boundary
 
+For the additive ICVS automation contracts, scheduler, managed approvals and execution gates, see [ICVS automation](06_ICVS_AUTOMATION.md). The visibility contracts below remain compatible; automation-managed projects additionally consume approved gates and own their workflow stage.
+
 ```mermaid
 flowchart LR
   Browser --> Pages[Cloudflare Pages: React]
@@ -8,7 +10,7 @@ flowchart LR
   Worker --> Actors[Durable Objects: existing kernel IPC]
 ```
 
-ICVS lives in `icvs/index.ts`; MAX-CORE is an integration boundary awaiting its actual implementation. No external orchestrator, scheduler, ingestion, recovery engine, or publication action is introduced by this dashboard. Approval decisions record governor intent; they do not publish products automatically.
+ICVS lives in `icvs/index.ts`; MAX-CORE is the independent platform-neutral foundation workspace. The visibility dashboard itself does not execute products. The additive ICVS automation module now supplies a scheduled workflow runner and evidence-gated publication work; see the automation guide above. Integration observation ingestion is described below. Approval decisions record governor intent; they do not publish products automatically.
 
 ## API
 
@@ -46,3 +48,40 @@ The new API allows browser origins listed in comma-separated `ALLOWED_ORIGINS`. 
 8. Populate real product and approval data through trusted backend integrations. Empty production tables display empty states. The optional seed is synthetic local data only.
 
 The pre-existing workflow under `github/workflows/` is not an active GitHub Actions path. This implementation documents explicit deployment commands rather than enabling automatic production deployment. Run type checks, tests and build before deployment. Cloudflare pricing and account quotas must be checked against actual usage; this structure cannot guarantee a zero-dollar bill.
+
+## Governor Console visibility baseline
+
+Apply `0003_console.sql` after the existing migrations. It preserves the existing product stage and approval status constraints and existing GET response shapes. The five requested portfolio divisions are configuration records, not synthetic products. Assign existing products to a division through the trusted catalogue integration using `products.unit_id`. No browser product-specific conditions or MAX-CORE dependencies are introduced. This iteration leaves MAX-CORE untouched.
+
+New and extended contracts:
+
+- `GET /api/console`: a single D1 batch snapshot of products, division configuration, pending approvals, factory stages, department observations, rankings, health coverage, revenue groups, recommendations, forecasts and alerts. This is the dashboard and portfolio read model; existing APIs remain available to existing consumers.
+- `GET /api/system-health`: live API/D1/kernel-root Durable Object probes plus stored process-state health. No queue binding exists: queue health is explicitly unknown. Runtime process states do not establish heartbeat liveness.
+- `POST /api/session`: verify the existing governor bearer token before enabling the console's decisions. The token remains in memory; this is not a multi-user identity service. Reads remain public under the existing contract. Cloudflare Access is still needed for a private deployment.
+- `POST /api/approvals/:id/override`: accepts `{ "reason": "10–1000 character explanation" }`, authenticated with the governor token. Override is an explicit exception that approves a **pending** request. It does not amend a prior decision, execute an action or publish anything. Existing `approved`/`rejected` statuses remain compatible. Every new decision is recorded atomically by a D1 trigger in `governor_decisions`; updates and deletes of that ledger are rejected. Existing decisions are not backfilled with invented audit data.
+- `GET /api/decisions`: governor-authenticated latest 100 ledger entries. The shared governor token cannot establish individual human attribution.
+- `POST /api/telemetry`: integration-only observations using a separate `OBSERVATION_API_TOKEN` secret. The existing `GET /api/telemetry` contract is unchanged. Configure the secret only for backend producers, never in a `VITE_` variable or browser. Missing configuration returns 503; wrong credentials 401. Bodies over 16 KiB return 413; invalid fields 400; unknown products 404; older/equal observations 409.
+
+### Observation producer contract
+
+Send a complete latest snapshot, not a partial patch. Omitted optional fields clear their prior values. `source` is a non-empty producer identifier (max 200 characters); `observedAt` is a canonical UTC ISO timestamp with milliseconds, no later than the current time. The timestamp is compared atomically during upsert so out-of-order deliveries cannot overwrite newer state. Producers should send only their own current observations.
+
+Product observations contain `kind: "product"`, an existing `productId`, `source`, `observedAt` and optional:
+
+- `workflowStage`: Idea, Discovery, Specification, Architecture, Simulation, Build, Test, Package, Ready or Published.
+- `status`: queued, running, blocked or complete.
+- `health`: number from 0 to 100.
+- `revenueMinor`: non-negative safe integer in the currency's ISO minor units; requires a three-letter uppercase `currency` and non-empty `revenuePeriod`. The UI uses the currency's minor-unit exponent. Different currencies and reporting periods are never combined.
+- `forecast`: producer-supplied outlook up to 2,000 characters; `forecastDueAt`: parseable target date. No forecast is fabricated from an arbitrary score.
+
+Department observations contain `kind: "department"`, `department` (GOV, STRAT, ARCH, BUILD, TEST, OPS, DATA, GROWTH), `status`, `source`, `observedAt` and optional `health`, non-negative integer `queue`, `currentWork`, `kpiName`, `kpiValue`.
+
+Observations older than 24 hours are labelled stale and excluded from aggregate health and revenue. Missing values remain null, never synthetic zeroes. Recommendations use explicit Worker rules: fresh blockers, Ready products to review, and Ideas with recorded scores of at least 80. Stale explicit workflow observations do not generate recommendations. Alerts reflect high-risk pending decisions, panicked stored processes and fresh product health below 50. Every displayed forecast carries its source and freshness.
+
+Legacy Idea/Build/Ready/Live map to Idea/Build/Ready/Published only when no explicit workflow observation exists. Validation and Archived remain in an unclassified list; the implementation does not pretend they traversed intermediate stages. Test includes QA; Ready is ready to publish. Factory counts represent current position, not stage-completion history.
+
+### Integration and deployment limits
+
+This iteration provides operational visibility and an observation ingestion contract. It does not add a scheduler, autonomous build/publication executor, financial provider or forecasting model. Existing ICVS producers must be wired to emit these observations; until then departments, revenue and forecasts truthfully show missing data. The Governor's actions remain Approve, Reject and Override.
+
+Run the existing validation commands above. Local browser development now uses Vite's `/api` proxy to port 8787 when `VITE_API_URL` is unset. Production still requires the configured Worker URL and allowed Pages origin. No production migration or deployment is performed by local setup. The Preview starts with empty real local D1 tables; synthetic data is used only in isolated tests.

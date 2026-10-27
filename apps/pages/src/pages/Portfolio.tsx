@@ -1,45 +1,43 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { getPortfolio } from "../api/products";
+import { getConsole } from "../api/console";
+import { useApi } from "../hooks/useApi";
 import { AsyncState, EmptyState } from "../components/AsyncState";
 import { RefreshControl } from "../components/RefreshControl";
-import { ProductCard } from "../components/ProductCard";
-import { useApi } from "../hooks/useApi";
+import { Intelligence, Money } from "../components/Intelligence";
 export default function Portfolio() {
-  const state = useApi(getPortfolio);
+  const state = useApi(getConsole, 15000);
+  const [unit, setUnit] = useState("");
   const [query, setQuery] = useState("");
-  const [stage, setStage] = useState("all");
+  const [stage, setStage] = useState("");
   const [sort, setSort] = useState("score-desc");
-  const [view, setView] = useState<"table" | "cards">("table");
-  const products = (state.data ?? [])
-    .filter(
-      (product) =>
-        (stage === "all" || product.stage === stage) &&
-        `${product.name} ${product.description}`
+  const [view, setView] = useState("table");
+  const products =
+    state.data?.products.filter(
+      (p) =>
+        (!unit || p.unitId === unit) &&
+        (!stage || (p.factoryStage ?? p.stage) === stage) &&
+        `${p.name} ${p.description}`
           .toLowerCase()
-          .includes(query.trim().toLowerCase()),
-    )
-    .sort((a, b) =>
-      sort === "name"
-        ? a.name.localeCompare(b.name)
-        : sort === "score-asc"
-          ? a.score - b.score || a.name.localeCompare(b.name)
-          : b.score - a.score || a.name.localeCompare(b.name),
-    );
-  const clear = () => {
-    setQuery("");
-    setStage("all");
-  };
+          .includes(query.toLowerCase()),
+    ) ?? [];
+  products.sort((a, b) =>
+    sort === "name"
+      ? a.name.localeCompare(b.name)
+      : sort === "score-asc"
+        ? a.score - b.score
+        : b.score - a.score,
+  );
   return (
     <>
       <div className="page-heading">
         <div>
-          <div className="eyebrow">ICVS PORTFOLIO</div>
+          <div className="eyebrow">PORTFOLIO INTELLIGENCE</div>
           <h1>
             Portfolio<span className="title-dot">.</span>
           </h1>
           <p>
-            Compare opportunities, track progress, and find your next priority.
+            Every division. One view of performance, health and opportunity.
           </p>
         </div>
         <RefreshControl {...state} />
@@ -47,69 +45,51 @@ export default function Portfolio() {
       <AsyncState {...state} retry={state.reload} />
       {state.data && (
         <>
-          <div className="portfolio-summary">
-            <div>
-              <strong>{state.data.length}</strong>
-              <span>Total products</span>
-            </div>
-            <div>
-              <strong>
-                {
-                  state.data.filter((product) => product.stage === "Live")
-                    .length
-                }
-              </strong>
-              <span>Live products</span>
-            </div>
-            <div>
-              <strong>
-                {state.data.length
-                  ? Math.round(
-                      state.data.reduce(
-                        (sum, product) => sum + product.score,
-                        0,
-                      ) / state.data.length,
-                    )
-                  : "—"}
-              </strong>
-              <span>Average portfolio score</span>
-            </div>
+          <div
+            className="division-tabs"
+            role="group"
+            aria-label="Portfolio division"
+          >
+            <button aria-pressed={!unit} onClick={() => setUnit("")}>
+              All divisions
+            </button>
+            {state.data.units.map((u) => (
+              <button
+                key={u.id}
+                aria-pressed={unit === u.id}
+                onClick={() => setUnit(u.id)}
+              >
+                {u.name}
+              </button>
+            ))}
           </div>
           <div className="filter-toolbar">
             <label>
-              Search portfolio
+              Search products
               <input
                 type="search"
-                placeholder="Product name or description"
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Name or description"
               />
             </label>
             <label>
               Stage
-              <select
-                value={stage}
-                onChange={(event) => setStage(event.target.value)}
-              >
-                <option value="all">All stages</option>
+              <select value={stage} onChange={(e) => setStage(e.target.value)}>
+                <option value="">All stages</option>
                 {[
-                  "Idea",
-                  "Validation",
-                  "Build",
-                  "Ready",
-                  "Live",
-                  "Archived",
-                ].map((value) => (
-                  <option key={value}>{value}</option>
+                  ...new Set([
+                    ...state.data.pipeline.map((p) => p.stage),
+                    ...state.data.unclassified.map((p) => p.stage),
+                  ]),
+                ].map((s) => (
+                  <option key={s}>{s}</option>
                 ))}
               </select>
             </label>
             <label>
               Sort by
-              <select
-                value={sort}
-                onChange={(event) => setSort(event.target.value)}
-              >
+              <select value={sort} onChange={(e) => setSort(e.target.value)}>
                 <option value="score-desc">Highest score</option>
                 <option value="score-asc">Lowest score</option>
                 <option value="name">Name A–Z</option>
@@ -133,77 +113,108 @@ export default function Portfolio() {
                 Cards
               </button>
             </div>
+            <span role="status">{products.length} products</span>
           </div>
-          <div className="results-line">
-            <span role="status">
-              {products.length} of {state.data.length} products
-            </span>
-            {(query || stage !== "all") && (
-              <button className="text-button" onClick={clear}>
-                Clear filters
-              </button>
-            )}
-          </div>
-          {!state.data.length ? (
-            <EmptyState>No portfolio products yet.</EmptyState>
-          ) : !products.length ? (
-            <EmptyState>
-              No products match your filters.{" "}
-              <button onClick={clear}>Clear filters</button>
-            </EmptyState>
+          {!products.length ? (
+            <EmptyState>No products reported for this selection.</EmptyState>
           ) : view === "cards" ? (
             <div className="product-grid">
-              {products.map((product) => (
-                <ProductCard key={product.id} product={product} />
+              {products.map((p) => (
+                <article className="panel" key={p.id}>
+                  <Link to={`/products/${encodeURIComponent(p.id)}`}>
+                    <h2>{p.name} ↗</h2>
+                  </Link>
+                  <p>
+                    {p.unit ?? "Unassigned division"} ·{" "}
+                    {p.factoryStage ?? p.stage}
+                  </p>
+                  <p>Status: {p.status ?? "Not reported"}</p>
+                  <p>
+                    Score: {p.score}/100 · Health:{" "}
+                    {p.health === null ? "Not reported" : `${p.health}/100`}
+                  </p>
+                  <p>
+                    Revenue:{" "}
+                    <Money minor={p.revenueMinor} currency={p.currency} />{" "}
+                    {p.revenuePeriod}
+                  </p>
+                  <p>Forecast: {p.forecast ?? "Not reported"}</p>
+                  <small>
+                    {p.observedAt
+                      ? `${p.source} · ${p.observedAt}${p.stale ? " · Stale" : ""}`
+                      : "Awaiting observations"}
+                  </small>
+                </article>
               ))}
             </div>
           ) : (
             <div className="panel table-wrap">
               <table>
-                <caption className="sr-only">
-                  Portfolio products sorted by{" "}
-                  {sort === "name"
-                    ? "name"
-                    : sort === "score-asc"
-                      ? "lowest score"
-                      : "highest score"}
-                </caption>
+                <caption className="sr-only">Portfolio performance</caption>
                 <thead>
                   <tr>
-                    <th scope="col">Product</th>
-                    <th scope="col">Stage</th>
-                    <th scope="col">Score</th>
-                    <th scope="col">Overview</th>
+                    {[
+                      "Product",
+                      "Stage / status",
+                      "Score",
+                      "Health",
+                      "Revenue",
+                      "Forecast",
+                    ].map((h) => (
+                      <th scope="col" key={h}>
+                        {h}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {products.map((product) => (
-                    <tr key={product.id}>
+                  {products.map((p) => (
+                    <tr key={p.id}>
                       <td>
-                        <Link
-                          to={`/products/${encodeURIComponent(product.id)}`}
-                        >
-                          {product.name} ↗
+                        <Link to={`/products/${encodeURIComponent(p.id)}`}>
+                          <strong>{p.name} ↗</strong>
                         </Link>
+                        <small className="cell-detail">
+                          {p.unit ?? "Unassigned division"}
+                        </small>
                       </td>
                       <td>
-                        <span
-                          className={`badge ${product.stage.toLowerCase()}`}
-                        >
-                          {product.stage}
-                        </span>
+                        {p.factoryStage ?? p.stage}
+                        <small className="cell-detail">
+                          {p.status ?? "Not reported"}
+                          {p.stale && p.observedAt ? " · Stale" : ""}
+                        </small>
                       </td>
                       <td>
-                        <strong>{product.score}</strong>
-                        <span className="muted"> / 100</span>
+                        <strong>{p.score}</strong> / 100
                       </td>
-                      <td>{product.description || "No description yet."}</td>
+                      <td>
+                        {p.health === null ? "Not reported" : `${p.health}/100`}
+                        {p.stale && p.health !== null && (
+                          <small className="cell-detail">Stale</small>
+                        )}
+                      </td>
+                      <td>
+                        <Money minor={p.revenueMinor} currency={p.currency} />
+                        <small className="cell-detail">
+                          {p.revenuePeriod}
+                          {p.stale && p.revenueMinor !== null ? " · Stale" : ""}
+                        </small>
+                      </td>
+                      <td>
+                        {p.forecast ?? "Not reported"}
+                        <small className="cell-detail">
+                          {p.observedAt ? `${p.source} · ${p.observedAt}` : ""}
+                          {p.stale && p.forecast ? " · Stale" : ""}
+                        </small>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           )}
+          <Intelligence data={state.data} unitId={unit} />
         </>
       )}
     </>

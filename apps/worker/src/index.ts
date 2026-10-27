@@ -1,9 +1,14 @@
+import { runAutomation } from "./automation/engine";
 import kernel from "./kernel";
 import { routeApi } from "./routes/api";
 import type { Env } from "./types";
 export { MicrokernelProcessActor } from "./kernel";
 
 export default {
+  async scheduled(_event: ScheduledController, env: Env): Promise<void> {
+    if (!env.DB) throw new Error("ICVS automation requires D1");
+    await runAutomation(env.DB);
+  },
   async fetch(
     request: Request,
     env: Env,

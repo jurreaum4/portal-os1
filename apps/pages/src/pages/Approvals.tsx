@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { api } from "../api/client";
+import { useCallback, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { getApprovals, approve, reject } from "../api/approvals";
+import { getApprovals, approve, reject, override } from "../api/approvals";
 import { AsyncState, EmptyState } from "../components/AsyncState";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { RefreshControl } from "../components/RefreshControl";
@@ -9,6 +10,26 @@ import { useGovernor } from "../layouts/GovernorLayout";
 export default function Approvals() {
   const state = useApi(getApprovals);
   const { token } = useGovernor();
+  const loadHistory = useCallback(
+    (signal: AbortSignal) =>
+      token
+        ? api<
+            {
+              id: number;
+              project: string;
+              request: string;
+              action: string;
+              reason: string | null;
+              decidedAt: string;
+            }[]
+          >("/api/decisions", {
+            signal,
+            headers: { Authorization: `Bearer ${token}` },
+          })
+        : Promise.resolve([]),
+    [token],
+  );
+  const history = useApi(loadHistory, 15000);
   const [params, setParams] = useSearchParams();
   const [query, setQuery] = useState("");
   const [priority, setPriority] = useState("all");
@@ -16,6 +37,7 @@ export default function Approvals() {
   const [selectedId, setSelectedId] = useState<string>();
   const [pending, setPending] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const productId = params.get("product");
   const visible = (state.data ?? []).filter(
@@ -35,23 +57,27 @@ export default function Approvals() {
     setRisk("all");
     setParams({});
   };
-  async function decide(action: "approve" | "reject") {
+  async function decide(action: "approve" | "reject" | "override") {
     if (!selected || pending || state.refreshing) return;
     const request = selected;
     setPending(request.id);
     setError("");
     setMessage("");
     try {
-      await (action === "approve" ? approve : reject)(request.id, token);
+      if (action === "override") await override(request.id, token, reason);
+      else await (action === "approve" ? approve : reject)(request.id, token);
+      setReason("");
       setMessage(
-        `${request.project}: ${request.action} request ${action === "approve" ? "approved" : "rejected"}.`,
+        `${request.project}: ${request.action} request ${action === "override" ? "overridden and approved" : action === "approve" ? "approved" : "rejected"}.`,
       );
       state.reload();
+      history.reload();
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "Decision could not be saved",
       );
       state.reload();
+      history.reload();
     } finally {
       setPending(null);
     }
@@ -172,7 +198,10 @@ export default function Approvals() {
                     key={approval.id}
                     approval={approval}
                     selected={approval.id === selected?.id}
-                    onReview={() => setSelectedId(approval.id)}
+                    onReview={() => {
+                      setSelectedId(approval.id);
+                      setReason("");
+                    }}
                   />
                 ))}
               </div>
@@ -223,6 +252,17 @@ export default function Approvals() {
                   >
                     View product details ↗
                   </Link>
+                  <label htmlFor="override-reason">
+                    Override reason (required only for override)
+                  </label>
+                  <textarea
+                    id="override-reason"
+                    value={reason}
+                    minLength={10}
+                    maxLength={1000}
+                    onChange={(event) => setReason(event.target.value)}
+                    placeholder="Explain why this request should proceed despite its constraints."
+                  />
                   <div className="button-group">
                     <button
                       className="primary"
@@ -237,16 +277,54 @@ export default function Approvals() {
                     >
                       Reject request
                     </button>
+                    <button
+                      disabled={
+                        !token ||
+                        pending !== null ||
+                        state.refreshing ||
+                        reason.trim().length < 10
+                      }
+                      onClick={() => void decide("override")}
+                    >
+                      Override & approve
+                    </button>
                   </div>
                   <p className="decision-note">
-                    Decisions are final for this request. Approval records your
-                    intent; it does not publish the product.
+                    Override approves this pending request with an audited
+                    reason. Decisions are final for this request. Managed
+                    approvals resume automation; publication still requires
+                    worker evidence. Legacy requests record governor intent.
                   </p>
                 </section>
               )}
             </div>
           )}
         </>
+      )}
+      {token && (
+        <section className="panel">
+          <h2>Decision ledger</h2>
+          <p className="muted">
+            Latest 100 immutable decisions. All actions use the shared Governor
+            identity.
+          </p>
+          <AsyncState {...history} retry={history.reload} />
+          {history.data?.length === 0 && (
+            <EmptyState>No recorded decisions yet.</EmptyState>
+          )}
+          {history.data?.map((d) => (
+            <div className="signal-row" key={d.id}>
+              <div>
+                <h3>
+                  {d.project} · {d.action}
+                </h3>
+                <p>{d.request}</p>
+                {d.reason && <p>{d.reason}</p>}
+                <small>{d.decidedAt} UTC</small>
+              </div>
+            </div>
+          ))}
+        </section>
       )}
     </>
   );

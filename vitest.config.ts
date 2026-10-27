@@ -8,6 +8,7 @@ export default defineConfig({
       miniflare: {
         bindings: {
           GOVERNOR_API_TOKEN: "synthetic-test-token",
+          OBSERVATION_API_TOKEN: "synthetic-observation-token",
           MAX_CORE_SCHEMA: readFileSync(
             new URL("./max-core/storage/schema.sql", import.meta.url),
             "utf8",

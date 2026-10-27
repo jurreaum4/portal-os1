@@ -1,9 +1,13 @@
+import { Link } from "react-router-dom";
 import { useState } from "react";
+import { api } from "../api/client";
 import { API_URL } from "../api/client";
 import { useGovernor } from "../layouts/GovernorLayout";
 export default function Settings() {
   const { token, setToken } = useGovernor();
   const [draft, setDraft] = useState(token);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   return (
     <>
@@ -21,18 +25,35 @@ export default function Settings() {
         <p className="muted">
           This workspace connects to the API configured at build time.
         </p>
-        <code className="endpoint">{API_URL}</code>
+        <code className="endpoint">
+          {API_URL || "Same-origin Worker proxy"}
+        </code>
         <h2 className="subheading">Governor access</h2>
         <p className="muted">
-          Enter the governor token to approve or reject requests. It stays in
-          memory for this tab and clears on reload.
+          Enter the governor token to approve, reject or override requests. It
+          stays in memory for this tab and clears on reload.
         </p>
         <form
-          onSubmit={(event) => {
+          onSubmit={async (event) => {
             event.preventDefault();
-            setToken(draft.trim());
-            setDraft("");
-            setSaved(true);
+            setBusy(true);
+            setError("");
+            setSaved(false);
+            try {
+              await api("/api/session", {
+                method: "POST",
+                headers: { Authorization: `Bearer ${draft.trim()}` },
+              });
+              setToken(draft.trim());
+              setDraft("");
+              setSaved(true);
+            } catch (cause) {
+              setError(
+                cause instanceof Error ? cause.message : "Sign-in failed",
+              );
+            } finally {
+              setBusy(false);
+            }
           }}
         >
           <label htmlFor="token">Governor token</label>
@@ -47,11 +68,16 @@ export default function Settings() {
             }}
           />
           <div className="button-group">
-            <button className="primary" type="submit">
-              Save access
+            <button
+              className="primary"
+              type="submit"
+              disabled={busy || !draft.trim()}
+            >
+              {busy ? "Verifying…" : "Sign in"}
             </button>
             <button
               type="button"
+              disabled={busy}
               onClick={() => {
                 setToken("");
                 setDraft("");
@@ -61,7 +87,12 @@ export default function Settings() {
               Clear access
             </button>
           </div>
-          {saved && <p role="status">Governor access updated.</p>}
+          {error && <p role="alert">{error}</p>}
+          {saved && (
+            <p role="status">
+              Governor access verified. <Link to="/">Return to console</Link>
+            </p>
+          )}
           <span className="access-state">
             {token
               ? "Governor token is set for this tab."

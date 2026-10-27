@@ -1,176 +1,229 @@
+import { AutomationOverview } from "../components/AutomationOverview";
 import { Link } from "react-router-dom";
-import { getDashboard, getTelemetry } from "../api/analytics";
-import { getApprovals } from "../api/approvals";
-import { getPortfolio } from "../api/products";
+import { getConsole } from "../api/console";
 import { useApi } from "../hooks/useApi";
 import { MetricTile } from "../components/MetricTile";
 import { AsyncState, EmptyState } from "../components/AsyncState";
-import { ProcessStates } from "../components/ProcessStates";
 import { RefreshControl } from "../components/RefreshControl";
+import { Intelligence, Money } from "../components/Intelligence";
+import { Departments } from "../components/Departments";
+import { Factory } from "../components/Factory";
+import { SystemHealth } from "../components/SystemHealth";
 export default function Dashboard() {
-  const summary = useApi(getDashboard, 15000);
-  const approvals = useApi(getApprovals, 15000);
-  const portfolio = useApi(getPortfolio, 15000);
-  const runtime = useApi(getTelemetry, 15000);
-  const data = summary.data;
+  const state = useApi(getConsole, 15000);
+  const data = state.data;
   return (
     <>
       <div className="page-heading">
         <div>
-          <div className="eyebrow">ICVS CONTROL ROOM</div>
+          <div className="eyebrow">GOVERNOR CONSOLE / OVERVIEW</div>
           <h1>
-            ICVS dashboard<span className="title-dot">.</span>
+            Mission control<span className="title-dot">.</span>
           </h1>
           <p>
-            Portfolio performance, decisions, and runtime signals in one place.
+            One command centre. Every portfolio, decision and operational
+            signal.
           </p>
         </div>
-        <RefreshControl
-          updatedAt={summary.updatedAt}
-          refreshing={
-            summary.refreshing ||
-            approvals.refreshing ||
-            portfolio.refreshing ||
-            runtime.refreshing
-          }
-          reload={() => {
-            summary.reload();
-            approvals.reload();
-            portfolio.reload();
-            runtime.reload();
-          }}
-        />
+        <RefreshControl {...state} />
       </div>
-      <AsyncState {...summary} retry={summary.reload} />
+      <AsyncState {...state} retry={state.reload} />
       {data && (
-        <div className="metrics">
-          <MetricTile
-            title="Total projects"
-            value={data.projects}
-            detail="Across the portfolio"
-            icon="▦"
-          />
-          <MetricTile
-            title="Active products"
-            value={data.activeProducts}
-            detail="Currently live"
-            icon="◇"
-          />
-          <MetricTile
-            title="Ready to publish"
-            value={data.readyToPublish}
-            detail="At the Ready stage"
-            icon="↗"
-          />
-          <MetricTile
-            title="Pending approvals"
-            value={data.approvals}
-            detail="Awaiting your decision"
-            icon="✓"
-          />
-          <MetricTile
-            title="Process health"
-            value={data.health}
-            detail={
-              data.health === null
-                ? "No process telemetry yet"
-                : "% in healthy stored states"
-            }
-            icon="⌁"
-          />
-        </div>
+        <>
+          <div className="command-banner">
+            <div>
+              <span className="eyebrow">PORTAL INTELLIGENCE</span>
+              <h2>Your ecosystem, in focus.</h2>
+              <p>
+                {data.products.length} products · {data.units.length} portfolio
+                divisions · {data.approvals.length} decisions awaiting the
+                Governor
+              </p>
+            </div>
+            <Link className="button primary" to="/approvals">
+              Review decisions →
+            </Link>
+          </div>
+          <div className="metrics console-metrics">
+            <MetricTile
+              title="Ecosystem health"
+              value={data.ecosystemHealth}
+              detail="% healthy stored process states"
+              icon="⌁"
+            />
+            <MetricTile
+              title="Portfolio score"
+              value={data.portfolioScore}
+              detail="Average recorded score / 100"
+              icon="◈"
+            />
+            <MetricTile
+              title="Portfolio health"
+              value={data.portfolioHealth}
+              detail={`${data.healthCoverage}/${data.products.length} products with fresh health`}
+              icon="◎"
+            />
+            <MetricTile
+              title="Active pipelines"
+              value={data.activePipelines}
+              detail="Products at known pre-publication stages"
+              icon="⇢"
+            />
+            <MetricTile
+              title="Critical alerts"
+              value={data.alerts.length}
+              detail="High-risk decisions, panics & low health"
+              icon="!"
+            />
+          </div>
+          <div className="intelligence-grid">
+            <section className="panel">
+              <div className="section-heading">
+                <div>
+                  <div className="eyebrow">GOVERNANCE</div>
+                  <h2>
+                    Decisions awaiting you{" "}
+                    <span className="count">{data.approvals.length}</span>
+                  </h2>
+                </div>
+                <Link to="/approvals">View all →</Link>
+              </div>
+              {!data.approvals.length && (
+                <EmptyState>
+                  No pending decisions. The approval queue is clear.
+                </EmptyState>
+              )}
+              {data.approvals.slice(0, 4).map((a) => (
+                <Link
+                  className="signal-row"
+                  key={a.id}
+                  to={`/approvals?product=${encodeURIComponent(a.productId)}`}
+                >
+                  <span className="signal-icon">✓</span>
+                  <div>
+                    <h3>{a.project}</h3>
+                    <p>
+                      {a.action} · {a.risk} risk
+                    </p>
+                  </div>
+                  <span className={`priority-tag ${a.priority.toLowerCase()}`}>
+                    {a.priority}
+                  </span>
+                </Link>
+              ))}
+            </section>
+            <section className="panel">
+              <div className="eyebrow">ATTENTION REQUIRED</div>
+              <h2>Critical alerts</h2>
+              {!data.alerts.length && (
+                <EmptyState>
+                  No critical alerts in reported data. Missing telemetry is not
+                  a health guarantee.
+                </EmptyState>
+              )}
+              {data.alerts.map((a) => (
+                <Link className="signal-row" key={a.id} to={a.href}>
+                  <span className="signal-icon alert-icon">!</span>
+                  <div>
+                    <h3>{a.title}</h3>
+                    <p>{a.detail}</p>
+                  </div>
+                  <span>→</span>
+                </Link>
+              ))}
+            </section>
+          </div>
+          <section className="panel">
+            <div className="section-heading">
+              <div>
+                <div className="eyebrow">AUTONOMOUS PRODUCT FACTORY</div>
+                <h2>From idea to published</h2>
+              </div>
+              <Link to="/pipeline">Explore progression →</Link>
+            </div>
+            <Factory data={data} compact />
+            <p className="muted">
+              Automatically refreshed from recorded system state.{" "}
+              {data.unclassified.length} products have no exact factory stage.
+              Managed workflows advance through evidence-backed automation and
+              governor gates.
+            </p>
+          </section>
+          <div className="intelligence-grid">
+            <section className="panel">
+              <div className="section-heading">
+                <div>
+                  <div className="eyebrow">PORTFOLIO RANKINGS</div>
+                  <h2>Leading products</h2>
+                </div>
+                <Link to="/portfolio">All divisions →</Link>
+              </div>
+              {!data.products.length && (
+                <EmptyState>No products have been reported.</EmptyState>
+              )}
+              {data.products.slice(0, 5).map((p, i) => (
+                <Link
+                  className="signal-row"
+                  key={p.id}
+                  to={`/products/${encodeURIComponent(p.id)}`}
+                >
+                  <span className="leader-rank">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <div>
+                    <h3>{p.name}</h3>
+                    <p>
+                      {p.unit ?? "Unassigned division"} ·{" "}
+                      {p.factoryStage ?? p.stage}
+                    </p>
+                  </div>
+                  <strong>
+                    {p.score}
+                    <small>/100</small>
+                  </strong>
+                </Link>
+              ))}
+            </section>
+            <section className="panel">
+              <div className="eyebrow">COMMERCIAL PERFORMANCE</div>
+              <h2>Reported revenue</h2>
+              <p className="muted">
+                Fresh observations only. Currency and reporting periods are kept
+                separate.
+              </p>
+              {!data.revenue.length && (
+                <EmptyState>
+                  Revenue not reported. No financial feed is connected.
+                </EmptyState>
+              )}
+              {data.revenue.map((r) => (
+                <div className="revenue-row" key={`${r.currency}-${r.period}`}>
+                  <strong>
+                    <Money minor={r.minor} currency={r.currency} />
+                  </strong>
+                  <p>
+                    {r.period} · {r.coverage}/{data.products.length} products
+                    reporting
+                  </p>
+                </div>
+              ))}
+            </section>
+          </div>
+          <AutomationOverview compact />
+          <Intelligence data={data} />
+          <section className="panel">
+            <div className="section-heading">
+              <div>
+                <div className="eyebrow">ICVS OPERATIONS</div>
+                <h2>Department status</h2>
+              </div>
+              <Link to="/departments">Operations centre →</Link>
+            </div>
+            <Departments rows={data.departments} />
+          </section>
+        </>
       )}
-      <div className="dashboard-grid operational-dashboard">
-        <section className="panel">
-          <div className="section-heading">
-            <div>
-              <h2>Decisions needing attention</h2>
-              <p>Requests ordered by priority.</p>
-            </div>
-            <Link to="/approvals">View all →</Link>
-          </div>
-          <AsyncState {...approvals} retry={approvals.reload} />
-          {approvals.data?.length === 0 && (
-            <EmptyState>No pending decisions. Your queue is clear.</EmptyState>
-          )}
-          {approvals.data?.slice(0, 4).map((approval) => (
-            <Link
-              className="queue-preview"
-              key={approval.id}
-              to={`/approvals?product=${encodeURIComponent(approval.productId)}`}
-            >
-              <span className="queue-icon">↗</span>
-              <div>
-                <strong>{approval.project}</strong>
-                <span>
-                  {approval.action} · {approval.risk} risk
-                </span>
-              </div>
-              <span
-                className={`priority-tag ${approval.priority.toLowerCase()}`}
-              >
-                {approval.priority}
-              </span>
-              <b>→</b>
-            </Link>
-          ))}
-        </section>
-        <section className="panel">
-          <div className="section-heading">
-            <div>
-              <h2>Runtime overview</h2>
-              <p>Refreshes every 15 seconds.</p>
-            </div>
-            <Link to="/runtime">Monitor →</Link>
-          </div>
-          <AsyncState {...runtime} retry={runtime.reload} />
-          {runtime.data && <ProcessStates rows={runtime.data} />}
-        </section>
-      </div>
-      <section className="panel">
-        <div className="section-heading">
-          <div>
-            <h2>Portfolio leaders</h2>
-            <p>Your highest scoring products.</p>
-          </div>
-          <Link to="/portfolio">Explore portfolio →</Link>
-        </div>
-        <AsyncState {...portfolio} retry={portfolio.reload} />
-        {portfolio.data?.length === 0 && (
-          <EmptyState>No products in your portfolio yet.</EmptyState>
-        )}
-        <div className="leader-grid">
-          {portfolio.data?.slice(0, 3).map((product, index) => (
-            <Link
-              className="leader-card"
-              key={product.id}
-              to={`/products/${encodeURIComponent(product.id)}`}
-            >
-              <span className="leader-rank">0{index + 1}</span>
-              <div>
-                <h3>{product.name}</h3>
-                <span className={`badge ${product.stage.toLowerCase()}`}>
-                  {product.stage}
-                </span>
-              </div>
-              <strong>
-                {product.score}
-                <small>/100</small>
-              </strong>
-            </Link>
-          ))}
-        </div>
-      </section>
-      <div className="workspace-shortcuts">
-        <Link to="/orchestration">
-          <strong>Orchestration</strong>
-          <span>Review handoffs and the product workflow →</span>
-        </Link>
-        <Link to="/pipeline">
-          <strong>Pipeline</strong>
-          <span>Track products through every stage →</span>
-        </Link>
-      </div>
+      <SystemHealth />
     </>
   );
 }

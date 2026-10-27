@@ -1,4 +1,9 @@
+import { routeAutomation } from "../automation/api";
+import { runAutomation } from "../automation/engine";
+import { authorised } from "../services/authorisation";
+import { ingestObservation } from "../services/observations";
 import type { Env } from "../types";
+import { consoleSnapshot, systemHealth } from "../services/console";
 
 const productColumns =
   "id, name, description, stage, score, updated_at AS updatedAt";
@@ -7,23 +12,53 @@ const json = (value: unknown, status = 200) => Response.json(value, { status });
 
 export async function routeApi(request: Request, env: Env): Promise<Response> {
   const path = new URL(request.url).pathname;
-  const decision = path.match(/^\/api\/approvals\/([^/]+)\/(approve|reject)$/);
+  if (
+    path === "/api/ideas" ||
+    path === "/api/automation" ||
+    path.startsWith("/api/automation/")
+  )
+    return routeAutomation(request, env);
+  if (path === "/api/telemetry" && request.method === "POST")
+    return ingestObservation(request, env);
+  if (path === "/api/system-health" && request.method === "GET")
+    return json(await systemHealth(env));
+  if (!env.DB) return json({ error: "Storage is not configured" }, 503);
+  if (path === "/api/console" && request.method === "GET")
+    return json(await consoleSnapshot(env.DB));
+  if (path === "/api/session") {
+    if (request.method !== "POST")
+      return json({ error: "Method not allowed" }, 405);
+    if (!env.GOVERNOR_API_TOKEN)
+      return json({ error: "Governor access is not configured" }, 503);
+    return (await authorised(request, env.GOVERNOR_API_TOKEN))
+      ? json({ authenticated: true })
+      : json({ error: "Invalid governor token" }, 401);
+  }
+  if (path === "/api/decisions") {
+    if (request.method !== "GET")
+      return json({ error: "Method not allowed" }, 405);
+    if (
+      !env.GOVERNOR_API_TOKEN ||
+      !(await authorised(request, env.GOVERNOR_API_TOKEN))
+    )
+      return json({ error: "Governor authorization required" }, 401);
+    return json(
+      (
+        await env.DB.prepare(
+          "SELECT d.id,a.product_id AS productId,p.name AS project,a.action AS request,d.action,d.reason,d.decided_at AS decidedAt FROM governor_decisions d JOIN approvals a ON a.id=d.approval_id JOIN products p ON p.id=a.product_id ORDER BY d.id DESC LIMIT 100",
+        ).all()
+      ).results,
+    );
+  }
+  const decision = path.match(
+    /^\/api\/approvals\/([^/]+)\/(approve|reject|override)$/,
+  );
   if (decision) {
     if (request.method !== "POST")
       return json({ error: "Method not allowed" }, 405);
     if (!env.GOVERNOR_API_TOKEN)
       return json({ error: "Governor decisions are not configured" }, 503);
-    // Hash before comparing so token length and prefix are not exposed by comparison timing.
-    const digest = async (value: string) =>
-      new Uint8Array(
-        await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)),
-      );
-    const supplied = request.headers.get("Authorization") ?? "";
-    const [actual, expected] = await Promise.all([
-      digest(supplied),
-      digest(`Bearer ${env.GOVERNOR_API_TOKEN}`),
-    ]);
-    if (actual.reduce((diff, byte, i) => diff | (byte ^ expected[i]), 0))
+    if (!(await authorised(request, env.GOVERNOR_API_TOKEN)))
       return json({ error: "Governor authorization required" }, 401);
     let id: string;
     try {
@@ -31,11 +66,32 @@ export async function routeApi(request: Request, env: Env): Promise<Response> {
     } catch {
       return json({ error: "Invalid approval ID" }, 400);
     }
-    const status = decision[2] === "approve" ? "approved" : "rejected";
+    let reason: string | null = null;
+    if (decision[2] === "override") {
+      try {
+        const body: unknown = await request.json();
+        if (
+          !body ||
+          typeof body !== "object" ||
+          !("reason" in body) ||
+          typeof body.reason !== "string" ||
+          body.reason.trim().length < 10 ||
+          body.reason.trim().length > 1000
+        )
+          return json(
+            { error: "Override requires a reason of 10–1000 characters" },
+            400,
+          );
+        reason = body.reason.trim();
+      } catch {
+        return json({ error: "Invalid override request" }, 400);
+      }
+    }
+    const status = decision[2] === "reject" ? "rejected" : "approved";
     const result = await env.DB.prepare(
-      "UPDATE approvals SET status = ?, decided_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'",
+      "UPDATE approvals SET status = ?, decision_kind = ?, decision_reason = ?, decided_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'",
     )
-      .bind(status, id)
+      .bind(status, decision[2], reason, id)
       .run();
     if (result.meta.changes === 0) {
       const exists = await env.DB.prepare(
@@ -51,6 +107,19 @@ export async function routeApi(request: Request, env: Env): Promise<Response> {
         },
         exists ? 409 : 404,
       );
+    }
+    // Managed gates are durable: the scheduled runner also consumes them if this wake-up fails.
+    const managed = await env.DB.prepare(
+      "SELECT product_id FROM automation_gates WHERE approval_id=?",
+    )
+      .bind(id)
+      .first<{ product_id: string }>();
+    if (managed) {
+      try {
+        await runAutomation(env.DB, managed.product_id);
+      } catch {
+        console.error("ICVS governor wake-up deferred to scheduled runner");
+      }
     }
     return json({ success: true, status });
   }
@@ -83,7 +152,7 @@ export async function routeApi(request: Request, env: Env): Promise<Response> {
     return json(
       (
         await env.DB.prepare(
-          `SELECT a.id, a.product_id AS productId, p.name AS project, a.action, a.priority, a.risk, a.status FROM approvals a JOIN products p ON p.id = a.product_id WHERE a.status = 'pending' ORDER BY a.created_at DESC`,
+          `SELECT a.id, a.product_id AS productId, p.name AS project, a.action, a.priority, a.risk, a.status FROM approvals a JOIN products p ON p.id = a.product_id WHERE a.status = 'pending' ORDER BY CASE a.priority WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END, a.created_at, a.id`,
         ).all()
       ).results,
     );

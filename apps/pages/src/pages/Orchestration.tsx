@@ -1,17 +1,19 @@
+import { AutomationOverview } from "../components/AutomationOverview";
 import { Link } from "react-router-dom";
-import { getPipeline } from "../api/pipeline";
+import { getConsole } from "../api/console";
 import { getApprovals } from "../api/approvals";
 import { getGovernance } from "../api/analytics";
 import { AsyncState, EmptyState } from "../components/AsyncState";
-import { PipelineBoard } from "../components/PipelineBoard";
+import { Factory } from "../components/Factory";
 import { RefreshControl } from "../components/RefreshControl";
 import { useApi } from "../hooks/useApi";
 export default function Orchestration() {
-  const pipeline = useApi(getPipeline);
+  const pipeline = useApi(getConsole, 15000);
   const approvals = useApi(getApprovals);
   const governance = useApi(getGovernance);
   const ready =
-    pipeline.data?.find((column) => column.stage === "Ready")?.products ?? [];
+    pipeline.data?.pipeline.find((column) => column.stage === "Ready")
+      ?.products ?? [];
   return (
     <>
       <div className="page-heading">
@@ -37,6 +39,7 @@ export default function Orchestration() {
           }}
         />
       </div>
+      <AutomationOverview />
       <div className="analytics-grid orchestration-top">
         <section className="panel">
           <div className="section-heading">
@@ -93,8 +96,9 @@ export default function Orchestration() {
             </div>
           ))}
           <p className="muted">
-            Approval decisions record governor intent. Publication and runtime
-            execution remain separate operations.
+            Managed approvals are consumed by ICVS automation. Publication is
+            recorded only after worker evidence. Legacy requests continue to
+            record governor intent.
           </p>
           <Link className="button" to="/runtime">
             Monitor runtime →
@@ -107,7 +111,7 @@ export default function Orchestration() {
           <p>Current stage of each product, from idea to live release.</p>
         </div>
       </div>
-      {pipeline.data && <PipelineBoard columns={pipeline.data} />}
+      {pipeline.data && <Factory data={pipeline.data} />}
     </>
   );
 }
