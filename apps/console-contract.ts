@@ -20,6 +20,8 @@ export interface ConsoleProduct {
   source: string | null;
   observedAt: string | null;
   stale: boolean;
+  workflowManaged?: number;
+  workflowUpdatedAt?: string | null;
 }
 export interface ConsoleDepartment {
   department: string;

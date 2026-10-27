@@ -1,3 +1,4 @@
+import { AutomationOverview } from "../components/AutomationOverview";
 import { Link } from "react-router-dom";
 import { getConsole } from "../api/console";
 import { useApi } from "../hooks/useApi";
@@ -144,8 +145,8 @@ export default function Dashboard() {
             <p className="muted">
               Automatically refreshed from recorded system state.{" "}
               {data.unclassified.length} products have no exact factory stage.
-              Decisions record intent; execution stays with the connected
-              systems.
+              Managed workflows advance through evidence-backed automation and
+              governor gates.
             </p>
           </section>
           <div className="intelligence-grid">
@@ -208,6 +209,7 @@ export default function Dashboard() {
               ))}
             </section>
           </div>
+          <AutomationOverview compact />
           <Intelligence data={data} />
           <section className="panel">
             <div className="section-heading">

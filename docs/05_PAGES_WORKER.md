@@ -1,5 +1,7 @@
 # Pages and Worker boundary
 
+For the additive ICVS automation contracts, scheduler, managed approvals and execution gates, see [ICVS automation](06_ICVS_AUTOMATION.md). The visibility contracts below remain compatible; automation-managed projects additionally consume approved gates and own their workflow stage.
+
 ```mermaid
 flowchart LR
   Browser --> Pages[Cloudflare Pages: React]
@@ -8,7 +10,7 @@ flowchart LR
   Worker --> Actors[Durable Objects: existing kernel IPC]
 ```
 
-ICVS lives in `icvs/index.ts`; MAX-CORE is the independent platform-neutral foundation workspace. No external orchestrator, scheduler, recovery engine or publication action is introduced by this dashboard. Integration observation ingestion is described below. Approval decisions record governor intent; they do not publish products automatically.
+ICVS lives in `icvs/index.ts`; MAX-CORE is the independent platform-neutral foundation workspace. The visibility dashboard itself does not execute products. The additive ICVS automation module now supplies a scheduled workflow runner and evidence-gated publication work; see the automation guide above. Integration observation ingestion is described below. Approval decisions record governor intent; they do not publish products automatically.
 
 ## API
 
@@ -47,7 +49,7 @@ The new API allows browser origins listed in comma-separated `ALLOWED_ORIGINS`. 
 
 The pre-existing workflow under `github/workflows/` is not an active GitHub Actions path. This implementation documents explicit deployment commands rather than enabling automatic production deployment. Run type checks, tests and build before deployment. Cloudflare pricing and account quotas must be checked against actual usage; this structure cannot guarantee a zero-dollar bill.
 
-## Governor Console iteration
+## Governor Console visibility baseline
 
 Apply `0003_console.sql` after the existing migrations. It preserves the existing product stage and approval status constraints and existing GET response shapes. The five requested portfolio divisions are configuration records, not synthetic products. Assign existing products to a division through the trusted catalogue integration using `products.unit_id`. No browser product-specific conditions or MAX-CORE dependencies are introduced. This iteration leaves MAX-CORE untouched.
 

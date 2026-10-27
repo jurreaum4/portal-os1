@@ -23,3 +23,7 @@ bindings = [
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["MicrokernelProcessActor"]
+
+# Existing Worker runs bounded ICVS orchestration; no additional runtime service.
+[triggers]
+crons = ["* * * * *"]

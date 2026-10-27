@@ -42,13 +42,17 @@ export interface PortfolioRow {
   forecastDueAt: string | null;
   source: string | null;
   observedAt: string | null;
+  workflowManaged: number;
+  workflowUpdatedAt: string | null;
 }
 export const portfolioQuery = `SELECT p.id, p.name, p.description, p.stage, p.score, p.updated_at AS updatedAt,
- p.unit_id AS unitId, u.name AS unit, o.workflow_stage AS workflowStage, o.status, o.health,
+ p.unit_id AS unitId, u.name AS unit, CASE WHEN w.product_id IS NOT NULL THEN CASE w.stage WHEN 'QA' THEN 'Test' ELSE w.stage END ELSE o.workflow_stage END AS workflowStage,
+ CASE WHEN w.product_id IS NOT NULL THEN CASE w.status WHEN 'awaiting_governor' THEN 'blocked' WHEN 'paused' THEN 'blocked' WHEN 'complete' THEN 'complete' ELSE 'running' END ELSE o.status END AS status, o.health,
  o.revenue_minor AS revenueMinor, o.currency, o.revenue_period AS revenuePeriod,
- o.forecast, o.forecast_due_at AS forecastDueAt, o.source, o.observed_at AS observedAt
+ o.forecast, o.forecast_due_at AS forecastDueAt, o.source, o.observed_at AS observedAt, (w.product_id IS NOT NULL) AS workflowManaged, w.updated_at AS workflowUpdatedAt
  FROM products p LEFT JOIN portfolio_units u ON u.id=p.unit_id
- LEFT JOIN product_observations o ON o.product_id=p.id`;
+ LEFT JOIN product_observations o ON o.product_id=p.id
+ LEFT JOIN automation_workflows w ON w.product_id=p.id`;
 
 // Never infer Discovery from legacy Validation: that state does not establish a precise factory step.
 export function effectiveStage(product: PortfolioRow): string | null {
@@ -80,6 +84,7 @@ export async function consoleSnapshot(
     approvalResult,
     processResult,
     departmentResult,
+    automationSignals,
   ] = await db.batch([
     db.prepare(`${portfolioQuery} ORDER BY p.score DESC,p.name`),
     db.prepare("SELECT id,name FROM portfolio_units ORDER BY name"),
@@ -92,7 +97,19 @@ export async function consoleSnapshot(
     db.prepare(
       "SELECT department,health,status,queue,current_work AS currentWork,kpi_name AS kpiName,kpi_value AS kpiValue,source,observed_at AS observedAt FROM department_observations",
     ),
+    db.prepare(
+      "SELECT w.product_id,p.name,w.status,m.classification,m.inputs,s.content AS simulation,s.created_at AS simulatedAt FROM automation_workflows w JOIN products p ON p.id=w.product_id LEFT JOIN automation_promotions m ON m.product_id=w.product_id LEFT JOIN automation_artifacts s ON s.product_id=w.product_id AND s.generation=w.generation AND s.kind='simulation'",
+    ),
   ]);
+  const signals = automationSignals.results as unknown as {
+    product_id: string;
+    name: string;
+    status: string;
+    classification: string | null;
+    inputs: string | null;
+    simulation: string | null;
+    simulatedAt: string | null;
+  }[];
   const products = (productResult.results as unknown as PortfolioRow[]).map(
     (p) => ({
       ...p,
@@ -128,6 +145,7 @@ export async function consoleSnapshot(
   const processTotal = processes.reduce((sum, p) => sum + p.count, 0);
   const sampled = products.filter((p) => p.health !== null && !p.stale);
   const recommendations = products.flatMap((p) => {
+    if (p.workflowManaged) return [];
     if (p.workflowStage && p.stale) return [];
     if (p.status === "blocked" && !p.stale)
       return [
@@ -159,6 +177,28 @@ export async function consoleSnapshot(
       ];
     return [];
   });
+  for (const signal of signals) {
+    if (!signal.inputs) continue;
+    const inputs = JSON.parse(signal.inputs) as {
+      nextAction?: string;
+      opportunity?: string;
+      risk?: string;
+    };
+    if (inputs.nextAction)
+      recommendations.push({
+        productId: signal.product_id,
+        title:
+          signal.status === "awaiting_governor"
+            ? `Review ${signal.name}'s governor request`
+            : `${signal.classification}: ${signal.name}`,
+        reason: inputs.nextAction,
+        kind: inputs.risk
+          ? "attention"
+          : inputs.opportunity
+            ? "opportunity"
+            : "automation",
+      });
+  }
   const revenue = [
     ...new Set(
       products
@@ -235,7 +275,31 @@ export async function consoleSnapshot(
         source: p.source,
         observedAt: p.observedAt,
         stale: p.stale,
-      })),
+      }))
+      .concat(
+        signals
+          .filter(
+            (s) =>
+              s.simulation &&
+              !products.find((p) => p.id === s.product_id)?.forecast,
+          )
+          .map((s) => {
+            const estimate = JSON.parse(s.simulation!) as {
+              forecastScore: number;
+              successProbability: number;
+              model: string;
+            };
+            return {
+              productId: s.product_id,
+              name: s.name,
+              forecast: `Planning forecast ${estimate.forecastScore}/100; estimated success ${Math.round(estimate.successProbability * 100)}% (heuristic, not calibrated).`,
+              dueAt: null,
+              source: estimate.model,
+              observedAt: s.simulatedAt,
+              stale: stale(s.simulatedAt),
+            };
+          }),
+      ),
     recommendations,
     alerts: [
       ...approvals
@@ -287,6 +351,33 @@ export async function systemHealth(env: Env): Promise<SystemHealth> {
   } catch {
     database = "unavailable";
   }
+  let queueStatus = "unknown";
+  let queueDetail = "D1 automation queue could not be checked";
+  try {
+    if (env.DB) {
+      const counts = await env.DB.prepare(
+        "SELECT COALESCE(SUM(j.status='queued'),0) AS queued,COALESCE(SUM(j.status='leased'),0) AS leased,COALESCE(SUM(j.status='failed'),0) AS failed,COALESCE(SUM(j.status='leased' AND j.lease_until<=?),0) AS expired FROM automation_jobs j JOIN automation_workflows w ON w.product_id=j.product_id AND w.generation=j.generation",
+      )
+        .bind(new Date().toISOString())
+        .first<{
+          queued: number;
+          leased: number;
+          failed: number;
+          expired: number;
+        }>();
+      if (counts) {
+        queueStatus =
+          counts.failed || counts.expired
+            ? "degraded"
+            : counts.queued || counts.leased
+              ? "observed"
+              : "healthy";
+        queueDetail = `D1 automation queue: ${counts.queued} queued, ${counts.leased} leased, ${counts.failed} failed, ${counts.expired} expired. Executor liveness is not inferred.`;
+      }
+    }
+  } catch {
+    /* A queue probe failure must not hide successful infrastructure checks. */
+  }
   let actor = "unavailable";
   try {
     if (env.MICROKERNEL_ACTOR) {
@@ -314,8 +405,8 @@ export async function systemHealth(env: Env): Promise<SystemHealth> {
       { name: "Runtime", status: runtime, detail },
       {
         name: "Queue",
-        status: "unknown",
-        detail: "No queue binding or queue telemetry is configured",
+        status: queueStatus,
+        detail: queueDetail,
       },
     ],
   };

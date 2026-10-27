@@ -1,3 +1,5 @@
+import { routeAutomation } from "../automation/api";
+import { runAutomation } from "../automation/engine";
 import { authorised } from "../services/authorisation";
 import { ingestObservation } from "../services/observations";
 import type { Env } from "../types";
@@ -10,6 +12,12 @@ const json = (value: unknown, status = 200) => Response.json(value, { status });
 
 export async function routeApi(request: Request, env: Env): Promise<Response> {
   const path = new URL(request.url).pathname;
+  if (
+    path === "/api/ideas" ||
+    path === "/api/automation" ||
+    path.startsWith("/api/automation/")
+  )
+    return routeAutomation(request, env);
   if (path === "/api/telemetry" && request.method === "POST")
     return ingestObservation(request, env);
   if (path === "/api/system-health" && request.method === "GET")
@@ -99,6 +107,19 @@ export async function routeApi(request: Request, env: Env): Promise<Response> {
         },
         exists ? 409 : 404,
       );
+    }
+    // Managed gates are durable: the scheduled runner also consumes them if this wake-up fails.
+    const managed = await env.DB.prepare(
+      "SELECT product_id FROM automation_gates WHERE approval_id=?",
+    )
+      .bind(id)
+      .first<{ product_id: string }>();
+    if (managed) {
+      try {
+        await runAutomation(env.DB, managed.product_id);
+      } catch {
+        console.error("ICVS governor wake-up deferred to scheduled runner");
+      }
     }
     return json({ success: true, status });
   }

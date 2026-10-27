@@ -1,3 +1,4 @@
+import { AutomationOverview } from "../components/AutomationOverview";
 import { Link } from "react-router-dom";
 import { getConsole } from "../api/console";
 import { getApprovals } from "../api/approvals";
@@ -38,6 +39,7 @@ export default function Orchestration() {
           }}
         />
       </div>
+      <AutomationOverview />
       <div className="analytics-grid orchestration-top">
         <section className="panel">
           <div className="section-heading">
@@ -94,8 +96,9 @@ export default function Orchestration() {
             </div>
           ))}
           <p className="muted">
-            Approval decisions record governor intent. Publication and runtime
-            execution remain separate operations.
+            Managed approvals are consumed by ICVS automation. Publication is
+            recorded only after worker evidence. Legacy requests continue to
+            record governor intent.
           </p>
           <Link className="button" to="/runtime">
             Monitor runtime →

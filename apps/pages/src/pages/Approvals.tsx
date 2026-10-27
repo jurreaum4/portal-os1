@@ -291,8 +291,9 @@ export default function Approvals() {
                   </div>
                   <p className="decision-note">
                     Override approves this pending request with an audited
-                    reason. Decisions are final for this request. Approval
-                    records your intent; it does not publish the product.
+                    reason. Decisions are final for this request. Managed
+                    approvals resume automation; publication still requires
+                    worker evidence. Legacy requests record governor intent.
                   </p>
                 </section>
               )}

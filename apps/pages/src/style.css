@@ -1956,3 +1956,91 @@ textarea:focus-visible {
 .command-banner h2 {
   color: #f4fbfc;
 }
+.automation-totals {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin: 24px 0;
+}
+.automation-totals > div {
+  background: #eff5f4;
+  padding: 18px;
+  border-radius: 8px;
+}
+.automation-totals strong {
+  font-size: 28px;
+  display: block;
+}
+.automation-totals span {
+  display: block;
+  font-size: 12px;
+  margin-top: 6px;
+  color: #526b73;
+}
+.simulation-card {
+  border: 1px solid #dce4e9;
+  padding: 18px;
+  border-radius: 8px;
+  margin: 14px 0;
+}
+.simulation-card dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+.simulation-card dt {
+  font-size: 12px;
+  color: #526b73;
+}
+.simulation-card dd {
+  margin: 8px 0 0;
+  font-size: 21px;
+  font-weight: 600;
+}
+.artifact-details {
+  border-bottom: 1px solid #e1e7eb;
+  padding: 15px 0;
+}
+.artifact-details summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.artifact-details pre,
+.signal-row pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  background: #f3f6f7;
+  padding: 14px;
+  line-height: 1.6;
+  max-height: 450px;
+  overflow: auto;
+}
+.automation-audit {
+  max-height: 500px;
+  overflow: auto;
+  margin: 16px 0;
+}
+@media (max-width: 700px) {
+  .automation-totals,
+  .simulation-card dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.simulation-card dl > div {
+  display: block;
+  min-width: 0;
+  padding: 12px 0;
+  border-bottom: 0;
+}
+.simulation-card dd {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  text-align: left;
+  word-break: normal;
+}
+.simulation-card dt {
+  min-height: 36px;
+}

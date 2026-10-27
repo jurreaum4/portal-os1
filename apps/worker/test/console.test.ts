@@ -313,7 +313,7 @@ describe("Governor Console observations and governance", () => {
       await (await get("/api/decisions", { headers: governor })).json(),
     ).toHaveLength(1);
   });
-  it("probes live D1 and Durable Objects without claiming unconfigured queues are healthy", async () => {
+  it("probes live D1, Durable Objects and the new durable automation queue", async () => {
     const data = (await (
       await get("/api/system-health")
     ).json()) as SystemHealth;
@@ -321,7 +321,10 @@ describe("Governor Console observations and governance", () => {
     expect(data.checks.find((c) => c.name === "Durable Object")?.status).toBe(
       "healthy",
     );
-    expect(data.checks.find((c) => c.name === "Queue")?.status).toBe("unknown");
+    expect(data.checks.find((c) => c.name === "Queue")?.status).toBe("healthy");
+    expect(data.checks.find((c) => c.name === "Queue")?.detail).toContain(
+      "0 queued",
+    );
     const response = await worker.fetch(
       new Request("https://portal.test/api/system-health"),
       {},

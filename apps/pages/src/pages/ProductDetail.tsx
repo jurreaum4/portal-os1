@@ -1,3 +1,4 @@
+import { AutomationProject } from "../components/AutomationProject";
 import { getConsole } from "../api/console";
 import { Money } from "../components/Intelligence";
 import { useCallback } from "react";
@@ -62,6 +63,7 @@ export default function ProductDetail() {
               Review approval queue →
             </Link>
           </section>
+          <AutomationProject id={id} managed={!!observation?.workflowManaged} />
           <AsyncState {...consoleState} retry={consoleState.reload} />
           {observation && (
             <section className="panel detail-panel">

@@ -27,9 +27,11 @@ export function Factory({
                   <strong>{p.name}</strong>
                   <span>{p.status ?? "Status not reported"}</span>
                   <small>
-                    {p.observedAt
-                      ? `${p.stale ? "Stale · " : ""}${p.observedAt}`
-                      : `Legacy stage: ${p.stage}`}
+                    {p.workflowManaged
+                      ? `ICVS · ${p.workflowUpdatedAt}`
+                      : p.observedAt
+                        ? `${p.stale ? "Stale · " : ""}${p.observedAt}`
+                        : `Legacy stage: ${p.stage}`}
                   </small>
                 </Link>
               ))}

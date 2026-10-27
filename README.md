@@ -13,6 +13,10 @@ A Cloudflare monorepo: a React/Vite governor console on **Pages**, a **Worker** 
 - `src/kernel/`: compatibility exports for older consumers. Existing Dart source files remain available.
 - `wrangler.toml`: Worker entry point, D1 and Durable Object bindings.
 
+## ICVS automation
+
+The existing Worker now runs durable intake, planning, simulation, resource allocation and governed workflows. See [acceptance criteria, schema and API checklist](docs/06_ICVS_AUTOMATION.md). Configure the existing `OBSERVATION_API_TOKEN` for trusted intake/execution workers; real Build and QA evidence is required before Ready. Governor actions remain Approve, Reject and Override.
+
 ## Local development
 
 Requires Node 22.12+ and npm. From the repository root:

@@ -1,3 +1,4 @@
+import { AutomationOverview } from "../components/AutomationOverview";
 import { getConsole } from "../api/console";
 import { useApi } from "../hooks/useApi";
 import { AsyncState } from "../components/AsyncState";
@@ -19,6 +20,7 @@ export default function Departments() {
         </div>
         <RefreshControl {...state} />
       </div>
+      <AutomationOverview compact />
       <AsyncState {...state} retry={state.reload} />
       {state.data && <DepartmentGrid rows={state.data.departments} />}
       <p className="muted">
