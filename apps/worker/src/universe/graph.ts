@@ -495,6 +495,13 @@ export async function universe(env: Env): Promise<Universe> {
 }
 
 export async function captureUniverse(env: Env) {
+  const today = new Date().toISOString().slice(0, 10);
+  const exists = await env.DB.prepare(
+    "SELECT 1 FROM universe_snapshots WHERE day=? LIMIT 1",
+  )
+    .bind(today)
+    .first();
+  if (exists) return;
   const graph = await universe(env);
   const day = graph.sampledAt.slice(0, 10);
   const statements = graph.nodes.map((n) =>

@@ -4,7 +4,7 @@ import {
   applyD1Migrations,
   runInDurableObject,
 } from "cloudflare:test";
-import { beforeAll, beforeEach, expect, it } from "vitest";
+import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 import type { D1Migration } from "@cloudflare/vitest-plugin";
 import type { Env } from "../src/types";
 import { marketplaceApi } from "../src/universe/marketplace";
@@ -327,3 +327,223 @@ it("orders dashboard and Universe pipelines from configured workflow, retaining 
     expect(pipeline.some((s) => s.stage === "Archived")).toBe(true);
   }
 });
+
+// Disable automatic scheduling only inside these tests so the pending reversal
+// and its compensation can be inspected before the next alarm runs.
+async function withReversibleFactory(
+  check: (
+    instance: any,
+    storage: DurableObjectStorage,
+    post: (path: string, body: Record<string, unknown>) => Promise<Response>,
+    operations: { url: string; events?: { id: string; sequence: number }[] }[],
+  ) => Promise<void>,
+) {
+  const productId = crypto.randomUUID();
+  await bindings.DB.prepare(
+    "INSERT INTO products(id,name,description,stage,division_id) VALUES (?,'Reversal regression','Verify compensation and governance against an immutable artifact','Idea','max-apps')",
+  )
+    .bind(productId)
+    .run();
+  const stub = bindings.FACTORY_ACTOR!.get(
+    bindings.FACTORY_ACTOR!.idFromName(productId),
+  );
+  await runInDurableObject(stub, async (instance: any, ctx) => {
+    const schedule = vi.spyOn(ctx.storage, "setAlarm").mockResolvedValue();
+    const operations: {
+      url: string;
+      events?: { id: string; sequence: number }[];
+    }[] = [];
+    instance.env.ICVS_EXECUTOR = {
+      fetch: async (url: string, init: RequestInit) => {
+        const body = JSON.parse(init.body as string);
+        operations.push({ ...body, url });
+        return Response.json({
+          operationId: body.operationId,
+          artifact: "https://fixture.invalid/artifact",
+          digest: "a".repeat(64),
+          checks: [
+            {
+              requirement: url.endsWith("/compensate")
+                ? "compensation"
+                : body.stage === "Package"
+                  ? "package"
+                  : "brief",
+              passed: true,
+              report: "https://fixture.invalid/report",
+            },
+          ],
+        });
+      },
+    };
+    const post = (path: string, body: Record<string, unknown>) =>
+      instance.fetch(
+        new Request(`https://factory.internal${path}`, {
+          method: "POST",
+          body: JSON.stringify({ ...body, productId }),
+        }),
+      ) as Promise<Response>;
+    try {
+      expect((await post("/run", {})).status).toBe(201);
+      await check(instance, ctx.storage, post, operations);
+    } finally {
+      schedule.mockRestore();
+      await ctx.storage.deleteAlarm();
+    }
+  });
+}
+
+it("does not compensate reversed effects again and retains newly executed effects", async () => {
+  await withReversibleFactory(async (instance, storage, post, operations) => {
+    for (let i = 0; i < 10; i++) {
+      if ((await storage.get<any>("workflow")).stage === "QA") break;
+      await instance.alarm();
+    }
+    let state = await storage.get<any>("workflow");
+    expect(state.stage).toBe("QA");
+    const events = (
+      await bindings.DB.prepare(
+        "SELECT id,engine,sequence FROM workflow_events WHERE run_id=? ORDER BY sequence",
+      )
+        .bind(state.id)
+        .all<{ id: string; engine: string; sequence: number }>()
+    ).results;
+    const build = events.find((e) => e.engine === "Build")!;
+    const research = events.find((e) => e.engine === "Research")!;
+    expect(build).toBeDefined();
+    expect(research).toBeDefined();
+    expect(
+      (
+        await post("/reverse", {
+          reverseEventId: build.id,
+          expectedSequence: state.sequence,
+          actor: "governor",
+          note: "Undo the executed build before revising research",
+        })
+      ).status,
+    ).toBe(202);
+    await instance.alarm();
+    state = await storage.get<any>("workflow");
+    expect(state.stage).toBe("Build");
+    expect(state.reversal).toBeUndefined();
+    const executor = instance.env.ICVS_EXECUTOR;
+    delete instance.env.ICVS_EXECUTOR;
+    // No external effects remain: an earlier checkpoint must restore without an executor.
+    expect(
+      (
+        await post("/reverse", {
+          reverseEventId: research.id,
+          expectedSequence: state.sequence,
+          actor: "governor",
+          note: "Restore earlier research after build compensation",
+        })
+      ).status,
+    ).toBe(202);
+    await instance.alarm();
+    state = await storage.get<any>("workflow");
+    expect(state.stage).toBe("Discovery");
+    expect(state.build).toBeUndefined();
+    expect(state.reversal).toBeUndefined();
+    expect(
+      operations.filter((o) => o.url.endsWith("/compensate")),
+    ).toHaveLength(1);
+    instance.env.ICVS_EXECUTOR = executor;
+    for (let i = 0; i < 10; i++) {
+      if ((await storage.get<any>("workflow")).stage === "QA") break;
+      await instance.alarm();
+    }
+    state = await storage.get<any>("workflow");
+    expect(state.stage).toBe("QA");
+    const freshBuild = await bindings.DB.prepare(
+      "SELECT id,sequence FROM workflow_events WHERE run_id=? AND engine='Build' ORDER BY sequence DESC LIMIT 1",
+    )
+      .bind(state.id)
+      .first<{ id: string; sequence: number }>();
+    expect(freshBuild!.id).not.toBe(build.id);
+    expect(
+      (
+        await post("/reverse", {
+          reverseEventId: research.id,
+          expectedSequence: state.sequence,
+          actor: "governor",
+          note: "Restore research and compensate only the new build",
+        })
+      ).status,
+    ).toBe(202);
+    await instance.alarm();
+    const compensations = operations.filter((o) =>
+      o.url.endsWith("/compensate"),
+    );
+    expect(compensations).toHaveLength(2);
+    expect(compensations[1].events).toContainEqual(
+      expect.objectContaining(freshBuild!),
+    );
+    expect(compensations[1].events?.some((e) => e.id === build.id)).toBe(false);
+    expect(
+      compensations[1].events?.every((e) => e.sequence > build.sequence),
+    ).toBe(true);
+    expect((await storage.get<any>("workflow")).reversal).toBeUndefined();
+  });
+});
+
+it.each(["approved", "rejected", "overridden"])(
+  "rejects a %s decision while a reversal is pending",
+  async (status) => {
+    await withReversibleFactory(async (instance, storage, post) => {
+      for (let i = 0; i < 12; i++) {
+        if ((await storage.get<any>("workflow")).approvalId) break;
+        await instance.alarm();
+      }
+      const state = await storage.get<any>("workflow");
+      expect(state.approvalId).toBeTruthy();
+      expect(state.decision).toBeUndefined();
+      const qa = await bindings.DB.prepare(
+        "SELECT id FROM workflow_events WHERE run_id=? AND engine='QA'",
+      )
+        .bind(state.id)
+        .first<string>("id");
+      expect(
+        (
+          await post("/reverse", {
+            reverseEventId: qa,
+            expectedSequence: state.sequence,
+            actor: "governor",
+            note: "Restore QA while its promotion request is pending",
+          })
+        ).status,
+      ).toBe(202);
+      const pending = await storage.get("workflow");
+      expect(
+        (
+          await post("/decision", {
+            approvalId: state.approvalId,
+            status,
+            note: "Governor decision during compensation",
+          })
+        ).status,
+      ).toBe(409);
+      expect(await storage.get("workflow")).toEqual(pending);
+      expect(
+        await bindings.DB.prepare("SELECT status FROM approvals WHERE id=?")
+          .bind(state.approvalId)
+          .first("status"),
+      ).toBe("pending");
+      expect(
+        await bindings.DB.prepare(
+          "SELECT count(*) AS n FROM workflow_events WHERE run_id=? AND sequence>?",
+        )
+          .bind(state.id, (pending as any).sequence)
+          .first("n"),
+      ).toBe(0);
+      await instance.alarm();
+      const restored = await storage.get<any>("workflow");
+      expect(restored.reversal).toBeUndefined();
+      expect(restored.stage).toBe("QA");
+      expect(restored.approvalId).toBeUndefined();
+      expect(
+        await bindings.DB.prepare("SELECT status FROM approvals WHERE id=?")
+          .bind(state.approvalId)
+          .first("status"),
+      ).toBe("rejected");
+    });
+  },
+);

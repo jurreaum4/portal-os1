@@ -130,13 +130,31 @@ export class ProductFactoryActor extends DurableObject<Env> {
             },
             { status: 409 },
           );
-        const events = (
+        const all = (
           await this.env.DB.prepare(
-            "SELECT id,engine,from_stage,to_stage,evidence FROM workflow_events WHERE run_id=? AND sequence>? ORDER BY sequence",
+            "SELECT id,engine,from_stage,to_stage,evidence,sequence FROM workflow_events WHERE run_id=? AND sequence>? ORDER BY sequence",
           )
             .bind(state.id, checkpoint.sequence)
-            .all<{ id: string; engine: string; evidence: string }>()
+            .all<{
+              id: string;
+              engine: string;
+              evidence: string;
+              sequence: number;
+            }>()
         ).results;
+        // A completed reversal has already undone its target through the prior event.
+        const compensated = new Set<string>();
+        for (const reversal of all) {
+          if (reversal.engine !== "Reversal") continue;
+          const { reverses } = JSON.parse(reversal.evidence) as {
+            reverses: string;
+          };
+          const from = Number(reverses.split(":").at(-1));
+          for (const event of all)
+            if (event.sequence >= from && event.sequence < reversal.sequence)
+              compensated.add(event.id);
+        }
+        const events = all.filter((event) => !compensated.has(event.id));
         const external = events.some(
           (e) =>
             ["Build", "QA", "Publishing"].includes(e.engine) ||
@@ -172,6 +190,11 @@ export class ProductFactoryActor extends DurableObject<Env> {
         );
       }
       if (path === "/decision") {
+        if (state?.reversal)
+          return Response.json(
+            { error: "Reversal pending; decide after restoration" },
+            { status: 409 },
+          );
         if (
           !state ||
           state.approvalId !== body.approvalId ||

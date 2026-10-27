@@ -5,7 +5,7 @@ import {
   applyD1Migrations,
   runInDurableObject,
 } from "cloudflare:test";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { D1Migration } from "@cloudflare/vitest-plugin";
 import type { Env } from "../src/types";
 import type { Universe } from "../src/universe/model";
@@ -254,7 +254,15 @@ describe("Universe security and integration", () => {
       ),
     ).toBe(true);
     await captureUniverse(bindings);
-    await captureUniverse(bindings);
+    const prepare = vi.spyOn(bindings.DB, "prepare");
+    try {
+      await captureUniverse(bindings);
+      expect(prepare).toHaveBeenCalledExactlyOnceWith(
+        "SELECT 1 FROM universe_snapshots WHERE day=? LIMIT 1",
+      );
+    } finally {
+      prepare.mockRestore();
+    }
     const graph = (await (await get()).json()) as Universe;
     expect(
       graph.nodes.find((n) => n.id === "product:graph-product")?.history,
@@ -262,6 +270,27 @@ describe("Universe security and integration", () => {
     await bindings.DB.prepare(
       "DELETE FROM divisions WHERE id='test-future'",
     ).run();
+  });
+  it("captures the graph when only a previous UTC day's snapshot exists", async () => {
+    await bindings.DB.prepare(
+      "INSERT INTO universe_snapshots(day,entity_id,data) VALUES ('2000-01-01','product:graph-product','{\"revenue\":1,\"health\":null}')",
+    ).run();
+    await captureUniverse(bindings);
+    const today = new Date().toISOString().slice(0, 10);
+    expect(
+      JSON.parse(
+        (await bindings.DB.prepare(
+          "SELECT data FROM universe_snapshots WHERE day=? AND entity_id='product:graph-product'",
+        )
+          .bind(today)
+          .first<string>("data"))!,
+      ),
+    ).toMatchObject({ revenue: 120 });
+    expect(
+      await bindings.DB.prepare(
+        "SELECT count(*) AS n FROM universe_snapshots WHERE entity_id='product:graph-product'",
+      ).first("n"),
+    ).toBe(2);
   });
 });
 

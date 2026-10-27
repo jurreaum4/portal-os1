@@ -14,7 +14,7 @@ export function Bemax() {
   const { token } = useGovernor();
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<
-    { question: string; response: BemaxAnswer }[]
+    { id: string; question: string; response: BemaxAnswer }[]
   >([]);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -41,7 +41,8 @@ export function Bemax() {
         body: JSON.stringify({ question: value }),
         signal: abort.signal,
       });
-      setMessages((m) => [...m.slice(-9), { question: value, response }]);
+      const message = { id: crypto.randomUUID(), question: value, response };
+      setMessages((m) => [...m.slice(-9), message]);
       setQuestion("");
     } catch (e) {
       if (!abort.signal.aborted)
@@ -93,8 +94,8 @@ export function Bemax() {
       </form>
       {error && <p role="alert">{error}</p>}
       <div aria-live="polite" aria-busy={busy}>
-        {messages.map((m, i) => (
-          <article className="bemax-answer" key={i}>
+        {messages.map((m) => (
+          <article className="bemax-answer" key={m.id}>
             <h3>{m.question}</h3>
             <p>{m.response.answer}</p>
             {m.response.items.map((item, j) => (
