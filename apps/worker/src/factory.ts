@@ -115,10 +115,10 @@ export class ProductFactoryActor extends DurableObject<Env> {
             { status: 409 },
           );
         const event = await this.env.DB.prepare(
-          "SELECT engine FROM workflow_events WHERE id=?",
+          "SELECT engine,sequence FROM workflow_events WHERE id=?",
         )
           .bind(body.reverseEventId)
-          .first<{ engine: string }>();
+          .first<{ engine: string; sequence: number }>();
         if (
           !event ||
           ["Reversal", "Workflow", "Resource Allocation"].includes(event.engine)
@@ -150,6 +150,14 @@ export class ProductFactoryActor extends DurableObject<Env> {
             reverses: string;
           };
           const from = Number(reverses.split(":").at(-1));
+          if (event.sequence > from && event.sequence < reversal.sequence)
+            return Response.json(
+              {
+                error:
+                  "Target was already compensated; select an active checkpoint",
+              },
+              { status: 409 },
+            );
           for (const event of all)
             if (event.sequence >= from && event.sequence < reversal.sequence)
               compensated.add(event.id);

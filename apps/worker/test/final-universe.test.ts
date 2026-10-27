@@ -7,6 +7,8 @@ import {
 import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 import type { D1Migration } from "@cloudflare/vitest-plugin";
 import type { Env } from "../src/types";
+import type { ProductFactoryActor } from "../src/factory";
+import type { ExecutionEvidence } from "../src/icvs/engines";
 import { marketplaceApi } from "../src/universe/marketplace";
 const bindings = env as unknown as Env & { TEST_MIGRATIONS: D1Migration[] };
 const headers = { Authorization: "Bearer synthetic-test-token" };
@@ -328,11 +330,34 @@ it("orders dashboard and Universe pipelines from configured workflow, retaining 
   }
 });
 
+type ReversibleFactoryInstance = Pick<
+  ProductFactoryActor,
+  "fetch" | "alarm"
+> & {
+  env: { ICVS_EXECUTOR?: Pick<NonNullable<Env["ICVS_EXECUTOR"]>, "fetch"> };
+};
+type WorkflowSnapshot = {
+  id: string;
+  stage: string;
+  sequence: number;
+  build?: ExecutionEvidence;
+  approvalId?: string;
+  decision?: { status: string; note: string };
+  reversal?: { eventId: string; operationId: string };
+};
+async function readWorkflow(
+  storage: DurableObjectStorage,
+): Promise<WorkflowSnapshot> {
+  const state = await storage.get<WorkflowSnapshot>("workflow");
+  if (!state) throw new Error("Workflow snapshot is missing");
+  return state;
+}
+
 // Disable automatic scheduling only inside these tests so the pending reversal
 // and its compensation can be inspected before the next alarm runs.
 async function withReversibleFactory(
   check: (
-    instance: any,
+    instance: ReversibleFactoryInstance,
     storage: DurableObjectStorage,
     post: (path: string, body: Record<string, unknown>) => Promise<Response>,
     operations: { url: string; events?: { id: string; sequence: number }[] }[],
@@ -347,58 +372,63 @@ async function withReversibleFactory(
   const stub = bindings.FACTORY_ACTOR!.get(
     bindings.FACTORY_ACTOR!.idFromName(productId),
   );
-  await runInDurableObject(stub, async (instance: any, ctx) => {
-    const schedule = vi.spyOn(ctx.storage, "setAlarm").mockResolvedValue();
-    const operations: {
-      url: string;
-      events?: { id: string; sequence: number }[];
-    }[] = [];
-    instance.env.ICVS_EXECUTOR = {
-      fetch: async (url: string, init: RequestInit) => {
-        const body = JSON.parse(init.body as string);
-        operations.push({ ...body, url });
-        return Response.json({
-          operationId: body.operationId,
-          artifact: "https://fixture.invalid/artifact",
-          digest: "a".repeat(64),
-          checks: [
-            {
-              requirement: url.endsWith("/compensate")
-                ? "compensation"
-                : body.stage === "Package"
-                  ? "package"
-                  : "brief",
-              passed: true,
-              report: "https://fixture.invalid/report",
-            },
-          ],
-        });
-      },
-    };
-    const post = (path: string, body: Record<string, unknown>) =>
-      instance.fetch(
-        new Request(`https://factory.internal${path}`, {
-          method: "POST",
-          body: JSON.stringify({ ...body, productId }),
-        }),
-      ) as Promise<Response>;
-    try {
-      expect((await post("/run", {})).status).toBe(201);
-      await check(instance, ctx.storage, post, operations);
-    } finally {
-      schedule.mockRestore();
-      await ctx.storage.deleteAlarm();
-    }
-  });
+  await runInDurableObject(
+    stub,
+    async (instance: ReversibleFactoryInstance, ctx) => {
+      const schedule = vi.spyOn(ctx.storage, "setAlarm").mockResolvedValue();
+      const operations: {
+        url: string;
+        events?: { id: string; sequence: number }[];
+      }[] = [];
+      instance.env.ICVS_EXECUTOR = {
+        fetch: async (input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          if (!init?.body) throw new Error("Executor request body is missing");
+          const body = JSON.parse(init.body as string);
+          operations.push({ ...body, url });
+          return Response.json({
+            operationId: body.operationId,
+            artifact: "https://fixture.invalid/artifact",
+            digest: "a".repeat(64),
+            checks: [
+              {
+                requirement: url.endsWith("/compensate")
+                  ? "compensation"
+                  : body.stage === "Package"
+                    ? "package"
+                    : "brief",
+                passed: true,
+                report: "https://fixture.invalid/report",
+              },
+            ],
+          });
+        },
+      };
+      const post = (path: string, body: Record<string, unknown>) =>
+        instance.fetch(
+          new Request(`https://factory.internal${path}`, {
+            method: "POST",
+            body: JSON.stringify({ ...body, productId }),
+          }),
+        );
+      try {
+        expect((await post("/run", {})).status).toBe(201);
+        await check(instance, ctx.storage, post, operations);
+      } finally {
+        schedule.mockRestore();
+        await ctx.storage.deleteAlarm();
+      }
+    },
+  );
 }
 
 it("does not compensate reversed effects again and retains newly executed effects", async () => {
   await withReversibleFactory(async (instance, storage, post, operations) => {
     for (let i = 0; i < 10; i++) {
-      if ((await storage.get<any>("workflow")).stage === "QA") break;
+      if ((await readWorkflow(storage)).stage === "QA") break;
       await instance.alarm();
     }
-    let state = await storage.get<any>("workflow");
+    let state = await readWorkflow(storage);
     expect(state.stage).toBe("QA");
     const events = (
       await bindings.DB.prepare(
@@ -422,7 +452,7 @@ it("does not compensate reversed effects again and retains newly executed effect
       ).status,
     ).toBe(202);
     await instance.alarm();
-    state = await storage.get<any>("workflow");
+    state = await readWorkflow(storage);
     expect(state.stage).toBe("Build");
     expect(state.reversal).toBeUndefined();
     const executor = instance.env.ICVS_EXECUTOR;
@@ -439,7 +469,7 @@ it("does not compensate reversed effects again and retains newly executed effect
       ).status,
     ).toBe(202);
     await instance.alarm();
-    state = await storage.get<any>("workflow");
+    state = await readWorkflow(storage);
     expect(state.stage).toBe("Discovery");
     expect(state.build).toBeUndefined();
     expect(state.reversal).toBeUndefined();
@@ -448,10 +478,10 @@ it("does not compensate reversed effects again and retains newly executed effect
     ).toHaveLength(1);
     instance.env.ICVS_EXECUTOR = executor;
     for (let i = 0; i < 10; i++) {
-      if ((await storage.get<any>("workflow")).stage === "QA") break;
+      if ((await readWorkflow(storage)).stage === "QA") break;
       await instance.alarm();
     }
-    state = await storage.get<any>("workflow");
+    state = await readWorkflow(storage);
     expect(state.stage).toBe("QA");
     const freshBuild = await bindings.DB.prepare(
       "SELECT id,sequence FROM workflow_events WHERE run_id=? AND engine='Build' ORDER BY sequence DESC LIMIT 1",
@@ -481,7 +511,7 @@ it("does not compensate reversed effects again and retains newly executed effect
     expect(
       compensations[1].events?.every((e) => e.sequence > build.sequence),
     ).toBe(true);
-    expect((await storage.get<any>("workflow")).reversal).toBeUndefined();
+    expect((await readWorkflow(storage)).reversal).toBeUndefined();
   });
 });
 
@@ -490,10 +520,10 @@ it.each(["approved", "rejected", "overridden"])(
   async (status) => {
     await withReversibleFactory(async (instance, storage, post) => {
       for (let i = 0; i < 12; i++) {
-        if ((await storage.get<any>("workflow")).approvalId) break;
+        if ((await readWorkflow(storage)).approvalId) break;
         await instance.alarm();
       }
-      const state = await storage.get<any>("workflow");
+      const state = await readWorkflow(storage);
       expect(state.approvalId).toBeTruthy();
       expect(state.decision).toBeUndefined();
       const qa = await bindings.DB.prepare(
@@ -511,7 +541,7 @@ it.each(["approved", "rejected", "overridden"])(
           })
         ).status,
       ).toBe(202);
-      const pending = await storage.get("workflow");
+      const pending = await readWorkflow(storage);
       expect(
         (
           await post("/decision", {
@@ -521,7 +551,7 @@ it.each(["approved", "rejected", "overridden"])(
           })
         ).status,
       ).toBe(409);
-      expect(await storage.get("workflow")).toEqual(pending);
+      expect(await readWorkflow(storage)).toEqual(pending);
       expect(
         await bindings.DB.prepare("SELECT status FROM approvals WHERE id=?")
           .bind(state.approvalId)
@@ -531,11 +561,11 @@ it.each(["approved", "rejected", "overridden"])(
         await bindings.DB.prepare(
           "SELECT count(*) AS n FROM workflow_events WHERE run_id=? AND sequence>?",
         )
-          .bind(state.id, (pending as any).sequence)
+          .bind(state.id, pending.sequence)
           .first("n"),
       ).toBe(0);
       await instance.alarm();
-      const restored = await storage.get<any>("workflow");
+      const restored = await readWorkflow(storage);
       expect(restored.reversal).toBeUndefined();
       expect(restored.stage).toBe("QA");
       expect(restored.approvalId).toBeUndefined();
@@ -547,3 +577,67 @@ it.each(["approved", "rejected", "overridden"])(
     });
   },
 );
+
+it("rejects a compensated QA checkpoint after reversing Build", async () => {
+  await withReversibleFactory(async (instance, storage, post, operations) => {
+    for (let i = 0; i < 10; i++) {
+      if ((await readWorkflow(storage)).stage === "Package") break;
+      await instance.alarm();
+    }
+    const state = await readWorkflow(storage);
+    expect(state.stage).toBe("Package");
+    const events = (
+      await bindings.DB.prepare(
+        "SELECT id,engine,sequence FROM workflow_events WHERE run_id=? ORDER BY sequence",
+      )
+        .bind(state.id)
+        .all<{ id: string; engine: string; sequence: number }>()
+    ).results;
+    const build = events.find((e) => e.engine === "Build")!;
+    const qa = events.find((e) => e.engine === "QA")!;
+    expect(qa.sequence).toBeGreaterThan(build.sequence);
+    expect(
+      (
+        await post("/reverse", {
+          reverseEventId: build.id,
+          expectedSequence: state.sequence,
+          actor: "governor",
+          note: "Compensate Build and its subsequent QA execution",
+        })
+      ).status,
+    ).toBe(202);
+    await instance.alarm();
+    const restored = await readWorkflow(storage);
+    expect(restored.stage).toBe("Build");
+    expect(restored.reversal).toBeUndefined();
+    const compensations = operations.filter((o) =>
+      o.url.endsWith("/compensate"),
+    );
+    expect(compensations).toHaveLength(1);
+    expect(compensations[0].events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: build.id }),
+        expect.objectContaining({ id: qa.id }),
+      ]),
+    );
+    const result = await post("/reverse", {
+      reverseEventId: qa.id,
+      expectedSequence: restored.sequence,
+      actor: "governor",
+      note: "Attempt to restore a QA checkpoint whose effects were compensated",
+    });
+    expect(result.status).toBe(409);
+    expect(await result.json()).toMatchObject({
+      error: expect.stringContaining("already compensated"),
+    });
+    expect(await readWorkflow(storage)).toEqual(restored);
+    expect(
+      await bindings.DB.prepare(
+        "SELECT MAX(sequence) AS sequence FROM workflow_events WHERE run_id=?",
+      )
+        .bind(state.id)
+        .first("sequence"),
+    ).toBe(restored.sequence);
+    expect(operations).toHaveLength(3); // Build, QA, compensation; no executor call on rejection.
+  });
+});
